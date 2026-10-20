@@ -1,0 +1,123 @@
+# 自考押题 · 多科目刷题站（单仓）
+
+2026 年 10 月自考押题自动判分练习站。**运行时为 Bun**（可选的简答 AI 判分服务为 Go）。一个仓库承载任意多个科目：
+
+- **共享引擎只有一份**：`web/`（前端）、`grade-svc/`（Go 判分服务）、`portal/`（门户与云同步）——科目之间零复制、零手拷同步。
+- **科目 = 一个目录**：`subjects/<科目>/` 里只放科目身份（`subject.json`）、题库源数据与专属解析器、思维导图等，互不污染。
+- **部署全自动遍历科目**：`./deploy.sh` 按 `subjects/` 清单生成前端暂存、判分镜像、nginx location 与 compose，加科目不改任何脚本。
+
+当前科目：
+
+| 科目目录 | 线上入口 | 题量 | 特性 |
+|---|---|---|---|
+| `os13180` | http://121.40.43.229/os/ | 190（58 单选 / 100 填空 / 32 简答） | 单选逐项解析开启（有串讲资料） |
+| `net04751` | http://121.40.43.229/net/ | 205（105 单选 / 70 填空 / 30 简答） | 逐项解析关闭（默认） |
+
+## 快速使用
+
+```bash
+bun run start os13180        # 本地跑一科（默认端口读 subject.json；PORT=xxxx 可覆盖）
+bun run build [科目…]        # 重建题库 data.js/questions.json 并刷新科目清单（缺省＝全部）
+bun run stage [科目…]        # 合成部署形态 build/stage/<前缀>/（也可双击其中 index.html 本机直开）
+./start-ai.sh os13180        # 本地联调 AI 判分（后台 Go 服务 + 前台静态站，需先 export QWEN_API_KEY=sk-xxx）
+bun test                     # 共享引擎回归 + 逐科目数据不变量 + 云同步交叉校验
+cd grade-svc && go test ./... # Go 判分服务单测（假上游，零真实网络）
+./deploy.sh                  # 线上一键发布（遍历全部科目，幂等）
+```
+
+线上统一入口 http://121.40.43.229/ （裸根自动落主科目操作系统）。**部署约定：本机不常驻服务**——`bun run start` 的 `/api/grade` 与 `/api/store` 默认都代理到线上，本机刷题与线上同源同进度；`./start-ai.sh` 仅本地联调 AI 时用 `GRADE_API` 覆盖为本地 Go 服务。
+
+## 新增一个科目（工作流）
+
+```bash
+bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（prefix+题号+中文名），端口自动取下一空闲对
+# 1) 源 docx（微信接收）→ textutil -convert txt -stdout "<docx>" > subjects/db06414/data/raw.txt
+# 2) 改 subjects/db06414/data/build_data.js 的「解析」段适配本师版式（装配段用共享层，勿动）
+# 3) bun run build db06414 && bun test
+# 4) bun run start db06414 本机浏览器验证
+# 5) ./deploy.sh   ← nginx location、判分服务、门户路由、科目切换器全自动纳入，零手工改配置
+```
+
+可选增强：科目根放 `考点串讲-思维导图.md` 并在 `subject.json` 填 `mindmap.file/label`；需要单选逐项解析时把导图副本存 `grade/reference.md` 并置 `flags.explain: true`（`grade.materialTitle` 填资料名）。
+
+## 仓库结构
+
+```
+├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js subject-switch.js
+│   └── subjects.js           # 由 build 依据全部 subject.json 生成（切换器数据源，勿手改）
+├── subjects/<科目>/
+│   ├── subject.json          # 科目身份唯一源：prefix/code/中文名/标题/storageKey/端口/特性开关/组卷参数/思维导图
+│   ├── data/                 # raw.txt + build_data.js（科目专属解析器）+ questions.json + 可选 explanations/essay_points/unordered
+│   ├── data.js               # 生成物（有意提交；QUIZ_DATA.meta 即 subject.json 的浏览器侧镜像）
+│   ├── mindmap.html          # 考点思维导图页（数据内联，科目产物）
+│   └── grade/reference.md    # 可选：单选逐项解析参考资料（须与根导图逐字一致，test/ref_sync.test.js 守）
+├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入，无 go:embed）
+├── portal/                   # portal.js（科目清单驱动）· store.js（bun:sqlite 云同步）· subjects.json（生成的门户路由清单）
+├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · build.js/stage.js/gen-compose.js/new-subject.js
+├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + sync↔store 交叉 + 代理/清单守卫
+├── server.js                 # 本地开发服务器（科目参数、静态双根、代理线上）
+├── start-ai.sh               # 本地 AI 判分一键起（科目参数）
+└── deploy.sh                 # 线上一键发布（遍历科目）
+```
+
+## 判分与使用（各科目通用）
+
+- 作答 → 点「提交评分」：
+  - **单选题**：点选项判对错——结果**直接标在选项区**（正确项绿底「✓ 正确答案」、错选项红底「你的选择 ✗」、其余淡出），分数看顶栏胶囊，不另开结果区；解析也展开在选项区正下方；
+  - **填空题**：直接在题干下划线上填写，**答案与标准答案完全一致才给分**（漏字、多字、换说法均判错；全/半角、大小写、空格差异不算差异）。官方认可的其他写法通过各科目 `build_data.js`/源文本解决（不改判分引擎）；「两大类：A和B」式**并列枚举**的多空题（各科目 `data/unordered.json` 清单）各空答案**顺序可互换**仍判全对——每空仍须逐字一致，只是空位间允许对调，有先后语义的空（如启动过程、P/V 操作）严禁入清单；单空但答案是两项枚举的题（`single` 清单）另认可「A或B」答出其一即对、「A和B」互换顺序也对；
+  - **简答题**：可选「整题作答」（一段话）或「分点作答」（按参考答案逐条背诵），按得分点关键词覆盖度打分（≥50% 视为命中），并标出答到的片段与完整参考答案。
+- **解析**：每题都有「解析」按钮，未作答也可随时点开；点开过解析的题记 `v` 标记，之后判分不洗白：随机组卷时不论得分一律按「完全没掌握」最高权重优先再考，「重做此题」清标记重新开始。凡未满分的题判分后解析自动展开（简答除外：默认只展开得分，解析手动点）。解析结构化排版：📍考点标签 → 答案行 → 逐条短句（关键词加粗）→ 简答附「✅ 得分点」编号列表。加粗由数据 `**…**` 标记驱动，未标注回落启发式。开启 `flags.explain` 的科目，单选解析区另有「🤖 逐项解析」：AI 逐选项讲解对错，先在科目参考资料找依据（📖），资料不足自动联网补充（🔍）；结果按题缓存本机派生键 `.expl`（不入云同步）；file:// 或 AI 不可用时不出现该按钮。
+- **随机组卷（约 100 分，目标分与题型分值可在 subject.json `paper` 配置）**：勾选后按分值加权抽题组模拟卷，顶部横幅显示卷面构成。出题权重：简答 > 填空 > 单选；看过解析的最易入选（×8）、未做/答错 ×4、没看过且已通过的降频（×0.3）。**组卷范围跟随当前筛选**（章节/题型/状态/搜索圈池；池空不组卷、勾选回退、换一批保留原卷）；卷面生成后固定、刷新不变；组卷即全新（卷内旧作答清空并先归档进本机历史 `.hist`，每题留最近 10 次、只存本机、界面不显示）；组卷后状态筛选不再影响卷面（只圈池），章节/题型/搜索仍卷内收窄；题序先单选再填空后简答；「🎲 换一批」按最新掌握情况重组。
+- **批量提交**：作答自动存草稿（刷新不丢），底部悬浮条「已作答未提交 N 题」→「批量提交评分」一次性判分弹汇总（题数/平均分/满分题数）。
+- 顶部按章节/题型/状态（未作答、待提高 <60、已掌握 ≥80）筛选，支持题干搜索、背答案模式。
+- **手机适配**：≤640px 工具栏折叠「☰ 筛选设置」吸顶；输入控件 16px 防 iOS 聚焦缩放；触控热区加大、悬浮条避手势横条。手机连同 WiFi：`HOST=0.0.0.0 bun run start <科目>` 开 `http://<局域网IP>:<科目端口>/`。
+- 作答记录与得分存浏览器 localStorage（键 = subject.json `storageKey`，派生键 `.shuffle` `.syncsnap` `.synccleared` `.expl` `.hist`），刷新不丢；「清空记录」三道闸门（确认 → 输入 6 位随机码 → 最终确认），连历史留档一并清除并同步云端。
+- **作答进度云同步**：经同源 `api/store`（`sync.js`）自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」全局压制；顶栏「☁️ 已同步 / 未联网」提示。本机与线上读写同一云端（`STORE_API` 默认线上；置 `off` 可禁用）。线上为公开无鉴权、**每科目一个全局槽位**（同科目访问者共用进度，个人自用场景，勿存敏感数据）；file:// 打开自动跳过云同步。
+- **考点思维导图**：各科目顶栏入口进 `mindmap.html`（按章分屏渐进披露、SVG 图形视图 + 列表视图、押题联动标注、搜索按章、状态存本机），文字版为科目根的导图 md。
+
+### 判分说明
+
+简答得分为本机词面/要点覆盖度估算（二字组合 + IDF 加权 + 字面兜底），鼓励按参考答案措辞背诵；原文默写≈100，只列要点标题≈60，无关作答≈0。实际阅卷以考试标准为准。
+
+## 简答 AI 判分（grade-svc，可选增强）
+
+简答在本机估分后异步升级为千问语义判分（🤖 徽标 + 逐要点点评）；`grade-svc/` 为多科目共享的 Go 服务（OpenAI Go SDK · 兼容模式 · 默认 `qwen3.8-flash`），分数口径与本机引擎一致（三档锚点），同「题干+要点+作答」服务内缓存不重复计费。**科目身份经 `SUBJECT_DIR` 注入**：阅卷 prompt 科目名、逐项解析参考资料与资料名全部读自科目目录（`subject.json` + `grade/reference.md`），代码中无科目硬编码；未设 `SUBJECT_DIR` 直接拒启。
+
+- 本地：`export QWEN_API_KEY=sk-xxx && ./start-ai.sh <科目>`（判分端口读 subject.json；os=8792、net=8794）。
+- 生产：`--build-arg SUBJECT=<科目目录>` 出每科目镜像（上下文 = 仓库根），每科目一个容器、容器内统一 8792、**有意不映射宿主端口**，密钥只在 Go 进程环境；**严禁把密钥写进前端源码或 data 文件**。
+- **单选逐项解析复用 `/api/grade` 同一端点**（请求体 `task:"explain"`）：第一级把科目参考资料全文交给模型判「能否全部找到依据」（📖），found=false 或失败则第二级 `enable_search` 联网重出（🔍）；`correct` 一律按题面答案推导。超时预算：Go 85s → server.js/门户代理 95s → 线上 nginx 120s（deploy.sh 维护）。
+- 降级：file://、服务未启动或未配 Key 时简答保持本机判分（标「本机估分」），其余不受影响；可选 `QWEN_MODEL`。
+- AI 结果随作答存记录 `g` 字段，刷新/换筛选直接恢复不再打网络；单选与填空始终本机即时判分。
+
+## 数据管线（勿手改生成物）
+
+各科目 `data.js` 与 `data/questions.json` 由 `bun run build <科目>` 生成，**data.js 严禁手改**（文件头有声明），系有意提交进 git 的生成物。更新题库：
+
+```bash
+textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bun run build <科目> && bun test
+```
+
+- 科目 `data/build_data.js` 只负责「把自己的源 docx 版式解析成规范题目数组」；装配段（unordered 并列互换标记、简答精简考点 `essay_points.json` 覆盖与 `**关键词**` 剥标、主观题解析 `explanations.json` 合并、变体生成、产物落盘、meta 注入）全走共享层 `scripts/build-lib.js`，勿在科目里重复实现。
+- 撰写新题解析必须逐题参考该科目串讲/考点资料并标注考点；简答得分点用大模型逐题精简（只留拿分关键词），措辞须保持参考答案词序，否则「原文作答≈满分」锚点（逐科目测试 ≥95）会掉分。
+- 判分口径升级时（如填空重算迁移）跑全量 `bun test`；合并逻辑改动会被 `test/merge_xcheck.test.js`（前端 sync.js ↔ 门户 store.js 等价交叉校验）拦截——这是「同步」的唯一守卫，不再有「三处同改」。
+
+## 线上部署与发布
+
+- `./deploy.sh`：探测免密 SSH（6000/22）→ 遍历 `subjects/` → `bun run build` + `bun run stage` → 本机交叉构建 linux/amd64 镜像（`exam-portal` + 每科目 `exam-grade-<prefix>`）→ `docker save` 管道上传 → 服务器 `docker load` + 生成的 compose 起（门户绑 127.0.0.1:8799，判分服务不映射端口）→ nginx 按 Host=IP 逐科目前缀 location 循环生成（读写超时 120s）→ 逐科目 curl 探活。幂等可重复；compose 为 `scripts/gen-compose.js --remote` 生成物（勿手改）。
+- 云同步 SQLite 用命名卷 `portal-store`（服务器 docker 为 snap 版，bind mount 必失败）。
+- 本机全栈 docker 联调：`bun run build && bun run stage && bun scripts/gen-compose.js --build > docker-compose.local.yml && docker compose -f docker-compose.local.yml up -d --build`。
+- **每次本地更新提交后必须跑 `./deploy.sh`** 并 curl 验证线上已生效。
+
+## 科目档案
+
+### os13180 · 操作系统（13180）
+
+190 题：58 单选 / 100 填空 / 32 简答；源 docx《2026年10月自考13180操作系统押题及答案解析汇总》按「[单选]/[填空题]/[简答题]+解析」逐行版式解析。132 道填空/简答解析依据《操作系统考点串讲》（`~/Downloads/操作系统.pdf`）逐题撰写（`data/explanations.json`），简答精简考点在 `data/essay_points.json`；unordered 并列互换 32 题。存储键 `os13180.v1`。思维导图：全书 8 章 40 节 157 考点（文字版 `操作系统考点串讲-思维导图.md`，与 `grade/reference.md` 逐字同步）；`flags.explain: true`（单选逐项解析开启）。
+
+### net04751 · 计算机网络安全（04751）
+
+205 题：105 单选 / 70 填空 / 30 简答；源 docx 为「题目区 1..231 + 答案区」双连续编号单行大段文本，按编号扫描解析（`data/build_data.js` 注释含版式细节）；26 题因缺答/依赖题图被剔除。暂无手写解析（单选沿用源文本，主观题回落展示参考答案）；数值答案 % 变体、`（或ACL）` 括号规范等口径在科目 parser 内。存储键 `netsec04751.v1`。思维导图文字版 `计算机网络安全考点-思维导图.md`（映射表 `data/mindmap_sections.json` 供 SEC_Q/CH_Q 生成）；`flags.explain: false`（有资料，开启只需改开关）。
+
+## 兼容与历史
+
+- 线上前缀 `/os/` `/net/`、localStorage 键、云端 store 科目主键与旧三仓（`~/自考操作系统` `~/自考网络安全` `~/自考押题门户`）完全一致——**已存作答进度无缝续用**。旧三仓自本仓启用后仅作存档，不再改动；网络安全站合入共享引擎后自动获得组卷跟随筛选、历史归档、单选解析内联等此前仅操作系统站有的能力。

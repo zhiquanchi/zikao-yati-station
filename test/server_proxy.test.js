@@ -1,6 +1,7 @@
 // server.js（本地开发服务器）回归测试（bun test）：/api/grade 与 /api/store 代理透传/降级/off 禁用，
 // 以及科目参数化的静态双根解析（科目产物 data.js/mindmap.html 优先、共享引擎 web/ 兜底）。
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { loadSubjects } from "../scripts/config.js";
 
@@ -147,6 +148,7 @@ describe("/api/store 云同步代理", () => {
 
 // ——— 科目参数化的静态解析：每个科目都能起站、都拿自己的题库、共享引擎兜底 ———
 for (const s of loadSubjects()) {
+  if (!existsSync(path.join(s.dir, "data.js"))) continue; // 骨架科目（尚无题库）跳过
   describe(`静态双根解析 · ${s.slug}`, () => {
     let proc, port;
     beforeAll(async () => {

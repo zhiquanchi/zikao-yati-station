@@ -51,6 +51,10 @@ describe("引擎口径（合成题）", () => {
 
 // ——— 逐科目数据不变量 ———
 for (const s of loadSubjects()) {
+  if (!existsSync(path.join(s.dir, "data/questions.json"))) {
+    // new-subject 刚建的骨架科目（尚无题库）跳过；部署链路会在 bun run build 处强制补齐
+    continue;
+  }
   const data = JSON.parse(readFileSync(path.join(s.dir, "data/questions.json"), "utf8"));
   const unordPath = path.join(s.dir, "data/unordered.json");
   const unord = existsSync(unordPath) ? JSON.parse(readFileSync(unordPath, "utf8")) : { ids: [], single: [] };

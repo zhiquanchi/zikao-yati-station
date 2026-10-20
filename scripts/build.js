@@ -6,7 +6,10 @@ import { writeFileSync } from "node:fs";
 import { loadSubjects, findSubject, WEB_DIR, ROOT } from "./config.js";
 
 const names = process.argv.slice(2);
-const subs = names.length ? names.map((n) => findSubject(n)) : loadSubjects();
+// --manifest：只刷新派生清单（web/subjects.js、portal/subjects.json），不重建题库——
+// 供 new-subject 等“改了 subject.json 但尚无数据”的场景。
+const manifestOnly = names[0] === "--manifest";
+const subs = manifestOnly ? [] : (names.length ? names.map((n) => findSubject(n)) : loadSubjects());
 
 for (const s of subs) {
   console.log(`\n—— 构建 ${s.slug}（${s.pageTitle}）——`);
