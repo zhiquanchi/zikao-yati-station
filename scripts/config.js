@@ -9,7 +9,7 @@ export const WEB_DIR = path.join(ROOT, "web");
 
 export function subjectDir(name) { return path.join(SUBJECTS_DIR, name); }
 
-// 返回 [{ name(目录名), dir(绝对路径), ...subject.json 字段 }]，按目录名排序保证稳定
+// 返回 [{ slug(目录名), dir(绝对路径), ...subject.json 字段（name 为中文科目名） }]，按目录名排序保证稳定
 export function loadSubjects() {
   const out = [];
   for (const name of readdirSync(SUBJECTS_DIR).sort()) {
@@ -19,16 +19,16 @@ export function loadSubjects() {
     if (!existsSync(cfgPath)) continue;
     const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
     if (!cfg.prefix || !cfg.code || !cfg.storageKey) throw new Error(`${name}/subject.json 缺 prefix/code/storageKey`);
-    out.push({ name, dir, ...cfg });
+    out.push({ slug: name, dir, ...cfg });
   }
   return out;
 }
 
-// 按目录名或 prefix 找单个科目，找不到抛错并列出可选值
+// 按目录名（slug）或 prefix 找单个科目，找不到抛错并列出可选值
 export function findSubject(arg) {
   const subs = loadSubjects();
-  const hit = subs.find((s) => s.name === arg || s.prefix === arg);
-  if (!hit) throw new Error(`未知科目「${arg}」，可选：${subs.map((s) => s.name).join(" / ")}`);
+  const hit = subs.find((s) => s.slug === arg || s.prefix === arg);
+  if (!hit) throw new Error(`未知科目「${arg}」，可选：${subs.map((s) => s.slug).join(" / ")}`);
   return hit;
 }
 

@@ -1,5 +1,6 @@
 {
   "prefix": "os",
+  "primary": true,
   "code": "13180",
   "name": "操作系统",
   "examMonth": "2026年10月",

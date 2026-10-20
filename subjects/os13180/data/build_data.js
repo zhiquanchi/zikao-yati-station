@@ -1,9 +1,12 @@
 // 把 textutil 导出的押题文本解析成结构化题库 data.js（Bun 运行时）。
-// 用法: textutil -convert txt -stdout <docx> > data/raw.txt && bun data/build_data.js
+// 用法: textutil -convert txt -stdout <docx> > subjects/os13180/data/raw.txt && bun run build os13180
+// 科目身份（标题/存储键/组卷参数/特性开关）来自 ../subject.json，统一注入 QUIZ_DATA.meta。
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { metaOf } from "../../../scripts/config.js";
 
 const HERE = import.meta.dir;
+const SUBJECT = JSON.parse(readFileSync(path.join(HERE, "..", "subject.json"), "utf8"));
 const RAW = path.join(HERE, "raw.txt");
 const OUT_JS = path.join(HERE, "..", "data.js");
 const OUT_JSON = path.join(HERE, "questions.json");
@@ -280,7 +283,7 @@ function main() {
   for (const q of questions) {
     q.explain = expl[String(q.id)] || q.explanation; // 具体解析：主观题人工撰写，单选沿用原文解析
   }
-  const payload = { title: "2026年10月自考 13180 操作系统 押题练习", chapters, questions };
+  const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters, questions };
   writeFileSync(OUT_JSON, JSON.stringify(payload, null, 1), "utf8");
   writeFileSync(OUT_JS, "// 由 data/build_data.js 自动生成，请勿手改\nwindow.QUIZ_DATA = " + JSON.stringify(payload) + ";\n", "utf8");
   console.log("已生成:", path.resolve(OUT_JS), path.resolve(OUT_JSON));

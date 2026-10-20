@@ -1,0 +1,12 @@
+[
+ {
+  "prefix": "os",
+  "label": "操作系统 13180",
+  "primary": true
+ },
+ {
+  "prefix": "net",
+  "label": "网络安全 04751",
+  "primary": false
+ }
+]

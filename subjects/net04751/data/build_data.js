@@ -1,11 +1,14 @@
 // 把 04751 押题 docx（textutil 转出的整段文本）解析成结构化题库 data.js（Bun 运行时）。
-// 用法: textutil -convert txt -stdout <docx> > data/raw.txt && bun data/build_data.js
+// 用法: textutil -convert txt -stdout <docx> > subjects/net04751/data/raw.txt && bun run build net04751
 // 源文件格式：题目区（1..231 连续编号，单选带 A、B、C、D 选项）＋ 答案区（“N.答案…”连续编号），
 // 两区编号各自从 1 开始、按序扫描切分；答案空缺或题图/计算类题目直接剔除，不入库。
+// 科目身份（标题/存储键/组卷参数/特性开关）来自 ../subject.json，统一注入 QUIZ_DATA.meta。
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { metaOf } from "../../../scripts/config.js";
 
 const HERE = import.meta.dir;
+const SUBJECT = JSON.parse(readFileSync(path.join(HERE, "..", "subject.json"), "utf8"));
 const RAW = path.join(HERE, "raw.txt");
 const OUT_JS = path.join(HERE, "..", "data.js");
 const OUT_JSON = path.join(HERE, "questions.json");
@@ -332,7 +335,7 @@ function main() {
   questions.forEach((q) => cnt[q.type]++);
   console.log("题目:", questions.length, cnt);
   console.log("剔除:", warnings.length ? warnings.join("；") : "无");
-  const payload = { title: "2026年10月自考 04751 计算机网络安全 押题练习", chapters: [CHAPTER], questions };
+  const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters: [CHAPTER], questions };
   writeFileSync(OUT_JSON, JSON.stringify(payload, null, 1), "utf8");
   writeFileSync(OUT_JS, "// 由 data/build_data.js 自动生成，请勿手改\nwindow.QUIZ_DATA = " + JSON.stringify(payload) + ";\n", "utf8");
   console.log("已生成:", path.resolve(OUT_JS), path.resolve(OUT_JSON));

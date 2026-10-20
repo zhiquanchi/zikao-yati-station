@@ -1,8 +1,9 @@
-// 13180 操作系统押题练习页：渲染 + 交互 + 判分结果展示
+// 自考押题练习页（共享前端引擎，多科目复用）：渲染 + 交互 + 判分结果展示。
+// 科目身份全部来自 QUIZ_DATA.meta（由 scripts/build.js 从 subjects/<科目>/subject.json 注入）。
 (async function () {
   "use strict";
   const D = window.QUIZ_DATA, G = window.GRADER;
-  const KEY = "os13180.v1";
+  const KEY = D.meta.storageKey; // 存储键随科目走：localStorage 与云同步槽位口径不变
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const TYPE_CN = { single: "单选", blank: "填空", essay: "简答" };
@@ -29,11 +30,11 @@
     if (dirty) save();
   })();
 
-  // ——— 随机组卷：加权抽约 100 分，生成后固定，换一批才重排 ———
+  // ——— 随机组卷：加权抽约 TARGET 分，生成后固定，换一批才重排 ———
   const SKEY = KEY + ".shuffle";
-  const SCORE = { single: 1, blank: 2, essay: 5 }; // 每题分值（贴近真实卷面结构）
+  const SCORE = Object.assign({ single: 1, blank: 2, essay: 5 }, D.meta.paper.scores); // 每题分值（贴近真实卷面结构，subject.json 可覆盖）
   const TYPE_RANK = { single: 0, blank: 1, essay: 2 }; // 卷面题序：单选→填空→简答（同题型内保持抽题随机序）
-  const TARGET = 100;                              // 目标总分（约）
+  const TARGET = D.meta.paper.target || 100;           // 目标总分（约）
   let shuf = loadShuf();
   function loadShuf() { try { return JSON.parse(localStorage.getItem(SKEY)) || null; } catch (e) { return null; } }
   function mulberry32(a) {
@@ -113,7 +114,7 @@
     el.style.display = "block";
     el.innerHTML = `📋 随机组卷 <b>${shuf.picked.length}</b> 题 · 总分 <b>${shuf.total}</b> 分` +
       (inFilter ? `（组卷范围：当前筛选）` : "") +
-      `（单选 ${cnt.single}×1 ＋ 填空 ${cnt.blank}×2 ＋ 简答 ${cnt.essay}×5）` +
+      `（单选 ${cnt.single}×${SCORE.single} ＋ 填空 ${cnt.blank}×${SCORE.blank} ＋ 简答 ${cnt.essay}×${SCORE.essay}）` +
       `<span class="pi-tip">点开过解析的最易入选（不论得分），未做/答错的次之，没看过解析且已通过的低频；点「🎲 换一批」按最新掌握情况重新组卷；筛选圈定抽题范围，组卷后状态筛选不再影响卷面（组卷即全新已清空卷内得分）</span>`;
   }
 
@@ -367,7 +368,7 @@
       html += `<div class="ex-pts"><h5>✅ 得分点（${q.points.length} 条，答出加粗关键词即得分）</h5><ol>` +
         q.points.map((p, i) => `<li>${rich(pointTexts(q, i, p), q)}</li>`).join("") + `</ol></div>`;
     }
-    if (q.type === "single" && aiEnabled()) { // file:// 或 AI 熔断时不提供逐项解析入口
+    if (q.type === "single" && aiEnabled() && D.meta.flags.explain) { // file://、AI 熔断或科目未开启 explain 特性时不提供逐项解析入口
       html += `<div class="optexpl"><button class="secondary optexpl-btn" type="button">🤖 逐项解析</button><div class="optexpl-body"></div></div>`;
     }
     return html;
@@ -849,6 +850,21 @@
     });
   }
 
+  // ——— 科目身份落到页面：标题、顶栏文案、思维导图入口与组卷目标分（全部来自 meta） ———
+  document.title = D.meta.pageTitle;
+  const h1 = $(".topbar h1");
+  if (h1) h1.textContent = D.meta.title;
+  const ew = $("#examWhen");
+  if (ew) ew.textContent = (D.meta.examMonth || "") + " 自考";
+  const mm = $("#mmEntry");
+  if (mm) {
+    if (D.meta.mindmap.enabled) { mm.textContent = D.meta.mindmap.label; mm.style.display = ""; }
+    else mm.remove();
+  }
+  const st = $("#shuffleTarget");
+  if (st) st.textContent = TARGET;
+  const again = $("#shuffleAgain");
+  if (again) again.title = `按题型（简答>填空>单选）与掌握情况（未做/答错更易出现）加权，重新组一张约${TARGET}分的卷子`;
   $("#total").textContent = D.questions.length;
   // 组卷范围跟随筛选后，order 不再必为全题库——恢复卷面只校验 picked 题号有效
   if (shuf && (!Array.isArray(shuf.picked) || !Array.isArray(shuf.order) || !shuf.picked.every((id) => QBYID[id]))) clearShuffle();

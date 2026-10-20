@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>2026年10月自考 13180 操作系统 · 押题练习</title>
+<title>自考押题练习</title><!-- 共享骨架：标题/顶栏文案由 app.js 按 QUIZ_DATA.meta（源自 subject.json）填充 -->
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
   <div class="wrap">
-    <h1>13180 操作系统 · 押题练习</h1>
-    <p class="sub">2026 年 10 月自考 · 共 <span id="total"></span> 题 · 填空/简答自动判分，作答记录自动云同步（本机与线上互通）<span id="syncChip" class="sync-chip"></span></p>
-    <a class="mm-entry" href="mindmap.html">🗺 考点思维导图（串讲 8 章全览）</a>
+    <h1>押题练习</h1>
+    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，作答记录自动云同步（本机与线上互通）<span id="syncChip" class="sync-chip"></span></p>
+    <a class="mm-entry" id="mmEntry" href="mindmap.html" style="display:none"></a>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -34,7 +34,7 @@
     </div>
     <input id="searchBox" type="search" placeholder="搜索题干关键词…">
     <div class="tool-row">
-      <label class="switch"><input type="checkbox" id="shuffleBox">随机组卷（约100分）</label>
+      <label class="switch"><input type="checkbox" id="shuffleBox">随机组卷（约<span id="shuffleTarget">100</span>分）</label>
       <button id="shuffleAgain" class="chip" style="display:none" title="按题型（简答>填空>单选）与掌握情况（未做/答错更易出现）加权，重新组一张约100分的卷子">🎲 换一批</button>
       <label class="switch"><input type="checkbox" id="refBox">背答案</label>
       <button id="resetBtn" class="ghost">清空记录</button>
