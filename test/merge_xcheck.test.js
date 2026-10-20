@@ -21,11 +21,16 @@ describe("sync.mergeBlobs ≡ golden 夹具", () => {
 });
 
 describe("前端上传载荷 ≡ golden 夹具（契约防漂移）", () => {
-  it("payloadStore/payloadShuf 按夹具输入重放逐字段一致", () => {
+  it("payloadStore/payloadShuf/payloadExtras 按夹具输入重放逐字段一致", () => {
     for (let i = 0; i < golden.payloads.length; i++) {
       const c = golden.payloads[i];
       expect(front.payloadStore(c.cur, c.snap, c.skip, NOW), "第 " + i + " 组 store").toEqual(c.payload);
       expect(front.payloadShuf(c.shufIn, c.snapShufIn, NOW), "第 " + i + " 组 shuf").toEqual(c.shufOut);
+      const extras = front.payloadExtras(c.histIn || {}, c.explIn || {}, NOW);
+      const histOut = Object.keys(extras.hist).length ? extras.hist : null;
+      const explOut = Object.keys(extras.expl).length ? extras.expl : null;
+      expect(histOut, "第 " + i + " 组 hist").toEqual(c.histOut ?? null);
+      expect(explOut, "第 " + i + " 组 expl").toEqual(c.explOut ?? null);
     }
   });
 });

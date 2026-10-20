@@ -159,7 +159,15 @@ func TestRejections(t *testing.T) {
 		{"s 非数字", "/store/os/abc23d", `{"store":{"1":{"u":"x","s":"100","ts":1}},"shuf":null,"clearedAt":0}`, 400},
 		{"store 缺失", "/store/os/abc23d", `{"shuf":null,"clearedAt":0}`, 400},
 		{"坏 JSON", "/store/os/abc23d", `not-json`, 400},
-		{"超 1MB", "/store/os/abc23d", `{"store":{"100":{"u":"` + strings.Repeat("x", 1<<20) + `","ts":1}},"shuf":null,"clearedAt":0}`, 413},
+		{"超 4MB", "/store/os/abc23d", `{"store":{"100":{"u":"` + strings.Repeat("x", 4<<20) + `","ts":1}},"shuf":null,"clearedAt":0}`, 413},
+		// v2 extras：形状不符宁拒不收（与 store 记录同口径）
+		{"hist 非对象", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"hist":[]}`, 400},
+		{"hist 值非数组", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"hist":{"1":{"u":"a","ts":9}}}`, 400},
+		{"hist 条目缺 ts", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"hist":{"1":[{"u":"a","s":1}]}}`, 400},
+		{"hist 条目缺 u", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"hist":{"1":[{"s":1,"ts":9}]}}`, 400},
+		{"hist 键非数字", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"hist":{"a1":[{"u":"a","ts":9}]}}`, 400},
+		{"expl 缺 items", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"expl":{"1":{"source":"ref","ts":9}}}`, 400},
+		{"expl 缺 ts", "/store/os/abc23d", `{"store":{},"shuf":null,"clearedAt":0,"expl":{"1":{"items":[]}}}`, 400},
 		{"非法科目名", "/store/%E4%BD%A0%E5%A5%BD/abc23d/", ok, 404},
 	}
 	for _, c := range cases {

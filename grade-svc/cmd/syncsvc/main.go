@@ -1,6 +1,7 @@
 // 云同步服务 sync-svc（多用户改造）：作答进度槽位存储，科目无关——subject 由门户路由层从 URL 前缀传入，仅作分区键。
 // 路由：GET/PUT /store/<subject>/<user>；/store/<subject>（或 /store/<subject>/）即 user=” 旧版兼容全局槽，
-// /store/<subject>/<同步码> 为私有槽。合并/校验/落库见 store.go，跨语言口径由 merge_golden.json 锁定。
+// /store/<subject>/<同步码> 为私有槽；GET /stats/<subject> 内网统计（读派生行表，见 rows.go）。
+// 合并/校验/落库见 store.go，跨语言口径由 merge_golden.json 锁定。
 // 与判分服务同 module 不同命令：本服务不持密钥、不吃 SUBJECT_DIR；compose 内网 8793、不映射宿主端口。
 // 本地启动：STORE_DB=/tmp/sync.db go run ./cmd/syncsvc（默认 STORE_DB=/data/sync.db 为容器路径）。
 package main
@@ -18,10 +19,13 @@ import (
 )
 
 // normalizeOut：incomingDoc 的对外序列化形状（与旧 portal/store.js 的 normalizeIncoming 返回值同构）。
+// hist/expl 为 v2 新增段：载荷没给就不出键（旧版形状逐字节不变），给了给合并端处理。
 type normalizeOut struct {
-	Store     map[string]json.RawMessage `json:"store"`
-	Shuf      json.RawMessage            `json:"shuf"`
-	ClearedAt float64                    `json:"clearedAt"`
+	Store     map[string]json.RawMessage  `json:"store"`
+	Shuf      json.RawMessage             `json:"shuf"`
+	ClearedAt float64                     `json:"clearedAt"`
+	Hist      map[string]json.RawMessage  `json:"hist,omitempty"`
+	Expl      map[string]json.RawMessage  `json:"expl,omitempty"`
 }
 
 // runNormalizeStdin 批量整形模式（syncsvc -normalize）：每行一个 PUT 载荷 JSON，
@@ -42,7 +46,7 @@ func runNormalizeStdin() {
 			fmt.Fprintln(out, "null")
 			continue
 		}
-		b, err := json.Marshal(normalizeOut{Store: res.store, Shuf: res.shuf, ClearedAt: res.clearedAt})
+		b, err := json.Marshal(normalizeOut{Store: res.store, Shuf: res.shuf, ClearedAt: res.clearedAt, Hist: res.hist, Expl: res.expl})
 		if err != nil || !json.Valid(b) {
 			fmt.Fprintln(out, "null")
 			continue
@@ -75,6 +79,11 @@ func newSyncMux(st *slotStore) *http.ServeMux {
 			return
 		}
 		st.handleStore(w, r, subject, user)
+	})
+	// 统计端点：读派生行表聚合（逐题作答量/平均分/通过率 + 逐用户汇总）。
+	// 仅容器内网可达（compose 不映射宿主端口、portal 不转发），站长 ssh 上机 curl 使用。
+	mux.HandleFunc("GET /stats/{subject}", func(w http.ResponseWriter, r *http.Request) {
+		st.handleStats(w, r.PathValue("subject"))
 	})
 	return mux
 }

@@ -6,7 +6,10 @@
 //   scripts/gen-merge-golden.js 刷新夹具，任何单侧漂移必红）：
 //   store 逐题比 rec.ts 新者胜；ts ≤ clearedAt（两端取大）的记录一律作废；
 //   本地删除 = 墓碑记录 {u:null,s:null,ts}（与合法「看过未作答」同形，判分/渲染均视为未答）；
-//   shuf 按 ts 新者胜，关闭组卷用 {cleared:true,ts} 墓碑压制对端旧卷。
+//   shuf 按 ts 新者胜，关闭组卷用 {cleared:true,ts} 墓碑压制对端旧卷；
+//   hist（历史归档，v2 上云）逐题并集去重（同 ts 先到先得）→ 受 clearedAt 压制 → 升序留最近 10；
+//   expl（AI 解析缓存，v2 上云）逐题 ts LWW，不受 clearedAt 压制（「清空记录」不洗解析缓存）；
+//   两端皆无 hist/expl 时输出不含该键——旧版 blob 形状逐字节不变（兼容基线）。
 // 策略：页面加载先拉取合并再渲染（超时 2.5s 降级纯本机）；此后 save() 触发防抖 1.5s 上推，
 //   服务端返回合并结果写回存储与内存（只按 ts 覆盖、绝不删除未同步的在编草稿，打字竞态安全）。
 //   「清空记录」的 clearedAt 压制仅在本人槽位内生效（本地键由身份分区，见 web/identity.js）。
@@ -14,7 +17,36 @@
   "use strict";
   const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-  // ——— 纯函数：blob = {store, shuf, clearedAt}，两端共用 ———
+  // ——— 纯函数：blob = {store, shuf, clearedAt, hist?, expl?}，两端共用 ———
+  const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v); // 与 Go 端 isObjectRaw 对齐：数组不算对象
+  function mergeHist(ha, hb, clearedAt) {
+    const out = {};
+    for (const id of new Set([...Object.keys(ha), ...Object.keys(hb)])) {
+      const seen = new Set();
+      const list = [];
+      for (const src of [ha, hb]) {
+        const arr = src[id];
+        if (!Array.isArray(arr)) continue;
+        for (const e of arr) {
+          const t = num(e && e.ts);
+          if (t <= clearedAt || seen.has(t)) continue; // 同 ts 先到先得（a 端优先）
+          seen.add(t);
+          list.push(e);
+        }
+      }
+      if (!list.length) continue; // 全被压制/无有效条目：不出键（与 Go 端一致）
+      list.sort((x, y) => num(x.ts) - num(y.ts));
+      out[id] = list.slice(-10);
+    }
+    return out;
+  }
+  function mergeExpl(ea, eb) {
+    const out = Object.assign({}, ea);
+    for (const id in eb) {
+      if (!(id in out) || num(eb[id] && eb[id].ts) > num(out[id] && out[id].ts)) out[id] = eb[id];
+    }
+    return out;
+  }
   function mergeBlobs(a, b, now) {
     now = now || Date.now();
     const clearedAt = Math.max(num(a && a.clearedAt), num(b && b.clearedAt));
@@ -28,8 +60,30 @@
     }
     const fa = a && a.shuf, fb = b && b.shuf;
     const shuf = !fa ? fb || null : !fb ? fa : num(fb.ts) > num(fa.ts) ? fb : fa;
-    return { store, shuf, clearedAt, updatedAt: now };
+    const out = { store, shuf, clearedAt };
+    const ha = isObj(a && a.hist) ? a.hist : null, hb = isObj(b && b.hist) ? b.hist : null;
+    const ea = isObj(a && a.expl) ? a.expl : null, eb = isObj(b && b.expl) ? b.expl : null;
+    if (ha || hb) out.hist = mergeHist(ha || {}, hb || {}, clearedAt);
+    if (ea || eb) out.expl = mergeExpl(ea || {}, eb || {});
+    out.updatedAt = now;
+    return out;
   }
+  // payloadExtras：上云前的 hist/expl 载荷段（与 payloadStore/payloadShuf 同为夹具锁定口径）——
+  // hist 剔除缺 ts 的畸形条目；expl 补 ts（改造前写入的旧缓存无 ts，按 LWW 语义以现存时刻盖章）。
+  // 防单条畸形导致整包被服务端 400 拒收。空段返回 {}，由调用侧决定不出键。
+  function payloadExtras(hist, expl, now) {
+    const H = {}, E = {};
+    for (const id in hist && typeof hist === "object" ? hist : {}) {
+      const arr = Array.isArray(hist[id]) ? hist[id].filter((e) => isObj(e) && num(e.ts) > 0) : [];
+      if (arr.length) H[id] = arr;
+    }
+    for (const id in expl && typeof expl === "object" ? expl : {}) {
+      const v = expl[id];
+      if (v && Array.isArray(v.items)) E[id] = num(v.ts) > 0 ? v : Object.assign({}, v, { ts: now });
+    }
+    return { hist: H, expl: E };
+  }
+
   const isTomb = (r) => !!r && r.u == null && r.s == null && !r.v;
   // 上传载荷：当前 store 照抄；「快照有、当前无」的键——已同步过的墓碑原样重放（幂等、不抢赢对端新答），
   // 其余（本轮真删除的记录/看过标记）发新墓碑。本轮已触发「清空记录」时跳过逐键墓碑（clearedAt 全局压制更干净）。
@@ -55,12 +109,12 @@
     return target;
   }
 
-  const api = { mergeBlobs, payloadStore, payloadShuf, applyInto, prefetch, schedule, markCleared, flushNow };
+  const api = { mergeBlobs, payloadStore, payloadShuf, payloadExtras, applyInto, prefetch, schedule, markCleared, flushNow };
   root.SYNC = api; // 浏览器挂 window、Bun 测试挂 globalThis
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
   // ——— 浏览器侧：键名由基础 KEY 派生（与 app.js 约定一致，KEY 已含同步码分区后缀），全程静默降级 ———
-  let KEY = "", SKEY = "", SNAPK = "", CLCK = "";
+  let KEY = "", SKEY = "", SNAPK = "", CLCK = "", HKEY = "", EKEY = "";
   let USER = ""; // 同步码（空串＝旧版兼容全局槽），拼进 api/store URL
   let ready = false; // http(s) 且接口未被永久判死
   let timer = null, pushing = false, pending = null, dirty = false;
@@ -73,10 +127,17 @@
     del(k) { try { localStorage.removeItem(k); } catch (e) {} },
   };
   function readLocal() {
-    let store = {}, shuf = null;
+    let store = {}, shuf = null, hist = {}, expl = {};
     try { store = JSON.parse(ls.get(KEY)) || {}; } catch (e) {}
     try { shuf = JSON.parse(ls.get(SKEY)) || null; } catch (e) {}
-    return { store, shuf, clearedAt: num(+ls.get(CLCK) || 0) };
+    try { hist = JSON.parse(ls.get(HKEY)) || {}; } catch (e) {} // v2：历史归档上云
+    try { expl = JSON.parse(ls.get(EKEY)) || {}; } catch (e) {} // v2：AI 解析缓存上云
+    return { store, shuf, clearedAt: num(+ls.get(CLCK) || 0), hist, expl };
+  }
+  // 合并结果里的 hist/expl 写回本机派生键（段缺失＝对端无此数据，不动本机）
+  function writebackExtras(merged) {
+    if (isObj(merged.hist)) ls.set(HKEY, JSON.stringify(merged.hist));
+    if (isObj(merged.expl)) ls.set(EKEY, JSON.stringify(merged.expl));
   }
   function readSnap() {
     try { const s = JSON.parse(ls.get(SNAPK)); if (s && s.store) return s; } catch (e) {}
@@ -99,6 +160,7 @@
 
   async function prefetch(key, user) {
     KEY = String(key || ""); SKEY = KEY + ".shuffle"; SNAPK = KEY + ".syncsnap"; CLCK = KEY + ".synccleared";
+    HKEY = KEY + ".hist"; EKEY = KEY + ".expl"; // 与 app.js/identity.js 的派生键约定一致
     USER = String(user || "");
     if (typeof location === "undefined" || (location.protocol !== "http:" && location.protocol !== "https:")) return; // file:// 保持纯本机
     ready = true;
@@ -114,6 +176,7 @@
     const merged = mergeBlobs(readLocal(), remote || { store: {}, shuf: null, clearedAt: 0 });
     ls.set(KEY, JSON.stringify(merged.store));
     writeShuf(merged.shuf);
+    writebackExtras(merged); // 对端的历史归档/解析缓存并入本机（app.js 在 prefetch 之后才读这两键）
     writeSnap(merged);
     setStatus("on", remote ? "☁️ 已同步 " + hm() : "☁️ 云同步已开启");
     schedule(merged.store, merged.shuf); // 把本机独有进度补传上去（服务端合并幂等）
@@ -126,12 +189,17 @@
     const had = pending;
     try {
       const snap = readSnap();
-      const clearedAt = Math.max(num(snap.clearedAt), num(+ls.get(CLCK) || 0), readLocal().clearedAt);
+      const local = readLocal();
+      const clearedAt = Math.max(num(snap.clearedAt), num(+ls.get(CLCK) || 0), local.clearedAt);
       const body = {
         store: payloadStore(pending.store, snap.store, clearedAt >= snap.at && clearedAt > 0, Date.now()),
         shuf: payloadShuf(pending.shuf, snap.shuf, Date.now()),
         clearedAt,
       };
+      // v2：历史归档与解析缓存全量随包上云（追加型数据无墓碑语义，服务端并集/ LWW 收敛）
+      const extras = payloadExtras(local.hist, local.expl, Date.now());
+      if (Object.keys(extras.hist).length) body.hist = extras.hist;
+      if (Object.keys(extras.expl).length) body.expl = extras.expl;
       const res = await fetch(apiUrl(), {
         method: "PUT", headers: { "content-type": "application/json" },
         body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
@@ -141,6 +209,7 @@
       applyInto(pending.store, merged.store, snap.store);
       ls.set(KEY, JSON.stringify(pending.store));
       writeShuf(merged.shuf);
+      writebackExtras(merged);
       writeSnap(merged);
       if (pending === had) dirty = false; // 推送期间无新改动才算干净
       setStatus("on", "☁️ 已同步 " + hm());

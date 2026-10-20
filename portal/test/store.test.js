@@ -113,7 +113,7 @@ describe("api/store 云同步（旧版兼容槽 user=''）", () => {
     expect(net.blob.store["7"]).toBeUndefined();
   });
 
-  it("畸形载荷 400、超 1MB 413、非 GET/PUT 405、非 JSON 400", async () => {
+  it("畸形载荷 400、超 4MB 413、非 GET/PUT 405、非 JSON 400", async () => {
     expect((await api("os", "PUT", { store: { abc: { u: "x", ts: 1 } }, shuf: null, clearedAt: 0 })).status).toBe(400);
     expect((await api("os", "PUT", { store: { 1: { u: "x" } }, shuf: null, clearedAt: 0 })).status).toBe(400);
     expect((await api("os", "PUT", { shuf: null, clearedAt: 0 })).status).toBe(400);
@@ -121,8 +121,69 @@ describe("api/store 云同步（旧版兼容槽 user=''）", () => {
     expect((await api("os", "PUT", "not-json")).status).toBe(400);
     const big = { store: {}, shuf: null, clearedAt: 0 };
     const junk = "x".repeat(64 * 1024);
-    for (let i = 0; i < 20; i++) big.store[String(1000 + i)] = { u: junk, ts: 1 };
+    for (let i = 0; i < 80; i++) big.store[String(1000 + i)] = { u: junk, ts: 1 }; // ≈5.2MB > 4MB
     expect((await api("os", "PUT", big)).status).toBe(413);
+  });
+});
+
+describe("v2 数据完全上云（hist/expl）与派生行统计", () => {
+  const U = "v2test23";
+  const syncApi = (method, body) =>
+    fetch(`http://127.0.0.1:${SYNC_PORT}/store/os/${U}`, {
+      method,
+      ...(body !== undefined ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
+    });
+
+  it("hist 并集去重留最近 10、expl ts LWW、clearedAt 压 hist 不压 expl", async () => {
+    let r = await syncApi("PUT", {
+      store: { 1: { u: "答", s: 100, ts: 10 } }, shuf: null, clearedAt: 0,
+      hist: { 1: [{ u: "旧答", s: 0, ts: 5 }, { u: "答", s: 100, ts: 7 }] },
+      expl: { 1: { source: "material", items: [{ key: "A", correct: true, why: "对" }], ts: 8 } },
+    });
+    expect(r.status).toBe(200);
+    // 第二设备：同 ts 归档不覆盖（先到先得）、新 ts 并入；expl 更新 ts 覆盖
+    r = await syncApi("PUT", {
+      store: {}, shuf: null, clearedAt: 0,
+      hist: { 1: [{ u: "篡改", s: 999, ts: 7 }, { u: "更旧答", s: 50, ts: 6 }] },
+      expl: { 1: { source: "search", items: [], ts: 9 } },
+    });
+    let blob = (await r.json()).blob;
+    expect(blob.hist["1"].find((e) => e.ts === 7).s).toBe(100); // 同 ts 先到先得
+    expect(blob.hist["1"].length).toBe(3);
+    expect(blob.expl["1"].source).toBe("search"); // ts LWW
+    // 清空记录：hist 一并压制、expl 保留
+    blob = (await (await syncApi("PUT", { store: {}, shuf: null, clearedAt: 106 })).json()).blob;
+    expect(blob.hist["1"]).toBeUndefined(); // 全被压制：该题不出键（hist 段仍在）
+    expect("hist" in blob).toBe(true);
+    expect(blob.expl["1"].source).toBe("search");
+  });
+
+  it("旧版载荷（无 extras 段）响应不含 hist/expl 键——兼容基线", async () => {
+    // 用全新码槽：从未同步过 extras，旧版 PUT 的合并结果必须保持旧版形状（旧客户端零破坏）
+    const blob = (await (await fetch(`http://127.0.0.1:${SYNC_PORT}/store/os/lgcy23`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ store: { 2: { u: "b", ts: 200 } }, shuf: null, clearedAt: 0 }),
+    })).json()).blob;
+    expect("hist" in blob).toBe(false);
+    expect("expl" in blob).toBe(false);
+  });
+
+  it("派生行统计：/stats/os 出数（逐题量/均分/通过 + 逐用户），portal 不转发该端点", async () => {
+    const stats = await (await fetch(`http://127.0.0.1:${SYNC_PORT}/stats/os`)).json();
+    expect(stats.subject).toBe("os");
+    expect(stats.questions.length).toBeGreaterThanOrEqual(2); // 前序各槽存活记录汇入（qid 2/7…）
+    const q7 = stats.questions.find((q) => q.qid === 7);
+    expect(q7.answered).toBeGreaterThanOrEqual(1); // 旧版槽（user=''）的 7 号记录
+    expect(q7.avg).toBeGreaterThan(0);
+    expect(stats.users.length).toBeGreaterThanOrEqual(2); // 至少 '' 与 lgcy23（断言不依赖 describe 执行顺序）
+    // 门户面：/os/stats 不是门户路由 → 404（统计仅内网可达）
+    expect((await fetch(`http://127.0.0.1:${PORT}/os/stats`)).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${PORT}/stats/os`)).status).toBe(404);
+  });
+
+  it("畸形 extras 400（hist 条目缺 u / expl 缺 ts）", async () => {
+    expect((await syncApi("PUT", { store: {}, shuf: null, clearedAt: 0, hist: { 1: [{ s: 1, ts: 9 }] } })).status).toBe(400);
+    expect((await syncApi("PUT", { store: {}, shuf: null, clearedAt: 0, expl: { 1: { items: [] } } })).status).toBe(400);
   });
 });
 

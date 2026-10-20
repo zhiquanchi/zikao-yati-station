@@ -21,6 +21,8 @@ type golden struct {
 	Payloads []struct {
 		Payload    json.RawMessage `json:"payload"`
 		ShufOut    json.RawMessage `json:"shufOut"`
+		HistOut    json.RawMessage `json:"histOut"` // v2：null/缺＝载荷不含该段
+		ExplOut    json.RawMessage `json:"explOut"`
 		Normalized json.RawMessage `json:"normalized"`
 	} `json:"payloads"`
 }
@@ -79,12 +81,21 @@ func TestGoldenPayloadContract(t *testing.T) {
 		body := append(json.RawMessage(`{"store":`), c.Payload...)
 		body = append(body, `,"shuf":`...)
 		body = append(body, c.ShufOut...)
-		body = append(body, `,"clearedAt":0}`...)
+		body = append(body, `,"clearedAt":0`...)
+		if len(c.HistOut) > 0 && !isNullRaw(c.HistOut) {
+			body = append(body, `,"hist":`...)
+			body = append(body, c.HistOut...)
+		}
+		if len(c.ExplOut) > 0 && !isNullRaw(c.ExplOut) {
+			body = append(body, `,"expl":`...)
+			body = append(body, c.ExplOut...)
+		}
+		body = append(body, '}')
 		inc := normalizeIncoming(body)
 		if inc == nil {
 			t.Fatalf("第 %d 组前端载荷被 normalizeIncoming 拒收（契约破坏）", i)
 		}
-		out, err := json.Marshal(normalizeOut{Store: inc.store, Shuf: inc.shuf, ClearedAt: inc.clearedAt})
+		out, err := json.Marshal(normalizeOut{Store: inc.store, Shuf: inc.shuf, ClearedAt: inc.clearedAt, Hist: inc.hist, Expl: inc.expl})
 		if err != nil {
 			t.Fatalf("第 %d 组整形结果序列化失败：%v", i, err)
 		}

@@ -4,6 +4,9 @@
 // scripts/gen-merge-golden.js 刷新夹具，任何单侧漂移必红。
 // 槽位 = (subject, user)：user='' 为旧版兼容全局槽（线上存量进度原地续用），其余为同步码私有槽。
 // JSON 一律以 json.RawMessage 原文流转：合并不改数格式与键序，返回契约与旧 portal/store.js 逐字段一致。
+// 存储双形态：sync 表整 blob 仍是线上协议与合并事实源（旧客户端零破坏）；每次 PUT 合并后
+// 同事务把结果展开成逐题行（answers/history/explains，见 rows.go）——派生读模型供统计查询，
+// 可随时从 blob 全量重建（启动即重建，自愈）。hist/expl 为 v2 新增上云数据（历史作答/AI 解析缓存）。
 package main
 
 import (
@@ -16,12 +19,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-const maxBody = 1 << 20 // 1MB 上限（与旧 portal/store.js 同口径）
+// maxBody：v2 载荷含 hist（每题≤10 次归档）与 expl（逐题解析缓存）全量，上限放宽到 4MB。
+const maxBody = 4 << 20
 
 var (
 	userRe    = regexp.MustCompile(`^[a-z2-9]{4,10}$`) // 同步码：去混淆小写字母表由前端签发，服务端只认格式
@@ -104,6 +109,8 @@ type blobDoc struct {
 	store     map[string]json.RawMessage
 	shuf      json.RawMessage // 假值（缺/null）归 nil
 	clearedAt float64
+	hist      map[string]json.RawMessage // v2：qid → 归档数组原文（[{u,s,ts}…]）
+	expl      map[string]json.RawMessage // v2：qid → 解析缓存对象原文（{source,items,ts}）
 }
 
 func parseBlob(raw []byte) *blobDoc {
@@ -122,6 +129,12 @@ func parseBlob(raw []byte) *blobDoc {
 		d.shuf = sh
 	}
 	d.clearedAt = numRaw(m["clearedAt"])
+	if h, ok := m["hist"]; ok && isObjectRaw(h) {
+		_ = json.Unmarshal(h, &d.hist)
+	}
+	if e, ok := m["expl"]; ok && isObjectRaw(e) {
+		_ = json.Unmarshal(e, &d.expl)
+	}
 	return d
 }
 
@@ -129,11 +142,88 @@ type mergedDoc struct {
 	Store     map[string]json.RawMessage `json:"store"`
 	Shuf      json.RawMessage            `json:"shuf"`
 	ClearedAt float64                    `json:"clearedAt"`
-	UpdatedAt int64                      `json:"updatedAt"`
+	// hist/expl 用指针区分「本就没有该段（旧版载荷，输出整体省略，兼容基线不动）」与「有但合并后为空」
+	Hist      *map[string]json.RawMessage `json:"hist,omitempty"`
+	Expl      *map[string]json.RawMessage `json:"expl,omitempty"`
+	UpdatedAt int64                     `json:"updatedAt"`
+}
+
+// histEntry：归档条目取 ts（模拟 JS num(e && e.ts)）。
+func histEntryTs(e json.RawMessage) float64 {
+	if !isObjectRaw(e) {
+		return 0
+	}
+	return recTs(e)
+}
+
+// mergeHist：逐题并集去重（同 ts 先到先得，a 端优先）→ 剔除 ts ≤ clearedAt → 按 ts 升序留最近 10。
+// 全被剔除的题不出键（与 JS 端逐字一致）。
+func mergeHist(ha, hb map[string]json.RawMessage, cleared float64) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	keys := map[string]bool{}
+	for k := range ha {
+		keys[k] = true
+	}
+	for k := range hb {
+		keys[k] = true
+	}
+	for id := range keys {
+		seen := map[float64]bool{}
+		var list []json.RawMessage
+		for _, src := range [2]map[string]json.RawMessage{ha, hb} {
+			raw, ok := src[id]
+			if !ok || !isArrayRaw(raw) {
+				continue
+			}
+			var entries []json.RawMessage
+			if err := json.Unmarshal(raw, &entries); err != nil {
+				continue
+			}
+			for _, e := range entries {
+				t := histEntryTs(e)
+				if t <= cleared || seen[t] {
+					continue
+				}
+				seen[t] = true
+				list = append(list, e)
+			}
+		}
+		if len(list) == 0 {
+			continue
+		}
+		sort.SliceStable(list, func(i, j int) bool { return histEntryTs(list[i]) < histEntryTs(list[j]) })
+		if len(list) > 10 {
+			list = list[len(list)-10:]
+		}
+		b, err := json.Marshal(list)
+		if err != nil {
+			continue
+		}
+		out[id] = b
+	}
+	return out
+}
+
+// mergeExpl：逐题 ts LWW（rb 严格更新者胜，平手取 a 端——与 store 记录同规则）；不受 clearedAt 压制
+// （解析缓存是 AI 输出而非作答，「清空记录」不洗它，与本机行为一致）。
+func mergeExpl(ea, eb map[string]json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	for id, ra := range ea {
+		out[id] = ra
+	}
+	for id, rb := range eb {
+		ra, dup := out[id]
+		if !dup || recTs(rb) > recTs(ra) {
+			out[id] = rb
+		}
+	}
+	return out
 }
 
 // mergeBlobs：store 逐题比 rec.ts 新者胜；ts ≤ clearedAt（两端取大）一律作废；
-// shuf 按 ts 新者胜（假值端取对端，双双假值归 null）。
+// shuf 按 ts 新者胜（假值端取对端，双双假值归 null）；
+// hist 逐题并集去重留最近 10（受 clearedAt 压制）；expl 逐题 ts LWW（不受压制）；
+// 两端皆无 hist/expl 时输出不含该键（旧版形状逐字节不变）。
 func mergeBlobs(a, b *blobDoc, now int64) mergedDoc {
 	cleared := 0.0
 	if a != nil && a.clearedAt > cleared {
@@ -194,7 +284,30 @@ func mergeBlobs(a, b *blobDoc, now int64) mergedDoc {
 	default:
 		shuf = fa
 	}
-	return mergedDoc{Store: store, Shuf: shuf, ClearedAt: cleared, UpdatedAt: now}
+	out := mergedDoc{Store: store, Shuf: shuf, ClearedAt: cleared, UpdatedAt: now}
+	var ha, hb map[string]json.RawMessage
+	if a != nil {
+		ha = a.hist
+	}
+	if b != nil {
+		hb = b.hist
+	}
+	if ha != nil || hb != nil {
+		m := mergeHist(ha, hb, cleared)
+		out.Hist = &m
+	}
+	var ea, eb map[string]json.RawMessage
+	if a != nil {
+		ea = a.expl
+	}
+	if b != nil {
+		eb = b.expl
+	}
+	if ea != nil || eb != nil {
+		m := mergeExpl(ea, eb)
+		out.Expl = &m
+	}
+	return out
 }
 
 // ——— 上传载荷整形校验（normalizeIncoming 的 Go 移植，宁拒不收畸形数据）———
@@ -203,6 +316,8 @@ type incomingDoc struct {
 	store     map[string]json.RawMessage
 	shuf      json.RawMessage
 	clearedAt float64
+	hist      map[string]json.RawMessage
+	expl      map[string]json.RawMessage
 }
 
 func normalizeIncoming(raw []byte) *incomingDoc {
@@ -252,7 +367,92 @@ func normalizeIncoming(raw []byte) *incomingDoc {
 			shuf = sh // 「清空组卷」墓碑
 		}
 	}
-	return &incomingDoc{store: store, shuf: shuf, clearedAt: numRaw(m["clearedAt"])}
+	inc := &incomingDoc{store: store, shuf: shuf, clearedAt: numRaw(m["clearedAt"])}
+	// hist（v2）：缺省合法（旧客户端）；给出就必须是 {数字键: [{u…,ts 有限数, s 可 null/数}…]}，
+	// 逐题超 10 条截新留 10（与合并端一致），规模上限防灌库。
+	if h, ok := m["hist"]; ok && !isNullRaw(h) {
+		if !isObjectRaw(h) {
+			return nil
+		}
+		var hm map[string]json.RawMessage
+		if err := json.Unmarshal(h, &hm); err != nil || len(hm) > 500 {
+			return nil
+		}
+		total := 0
+		hist := map[string]json.RawMessage{}
+		for id, arr := range hm {
+			if !idRe.MatchString(id) || !isArrayRaw(arr) {
+				return nil
+			}
+			var entries []json.RawMessage
+			if err := json.Unmarshal(arr, &entries); err != nil {
+				return nil
+			}
+			var kept []json.RawMessage
+			for _, e := range entries {
+				if !isObjectRaw(e) {
+					return nil
+				}
+				var em map[string]json.RawMessage
+				if err := json.Unmarshal(e, &em); err != nil {
+					return nil
+				}
+				if t, ok := em["ts"]; !ok || !isNumberFinite(t) {
+					return nil
+				}
+				if _, ok := em["u"]; !ok {
+					return nil
+				}
+				if s, ok := em["s"]; ok && !isNullRaw(s) && !isNumberFinite(s) {
+					return nil
+				}
+				kept = append(kept, e)
+			}
+			total += len(kept)
+			if total > 5000 {
+				return nil
+			}
+			sort.SliceStable(kept, func(i, j int) bool { return histEntryTs(kept[i]) < histEntryTs(kept[j]) })
+			if len(kept) > 10 {
+				kept = kept[len(kept)-10:]
+			}
+			b, err := json.Marshal(kept)
+			if err != nil {
+				return nil
+			}
+			hist[id] = b
+		}
+		inc.hist = hist
+	}
+	// expl（v2）：{数字键: {items 数组, ts 有限数}}；items 内容是 AI 输出不再深校验，形状过即可。
+	if e, ok := m["expl"]; ok && !isNullRaw(e) {
+		if !isObjectRaw(e) {
+			return nil
+		}
+		var em map[string]json.RawMessage
+		if err := json.Unmarshal(e, &em); err != nil || len(em) > 600 {
+			return nil
+		}
+		expl := map[string]json.RawMessage{}
+		for id, v := range em {
+			if !idRe.MatchString(id) || !isObjectRaw(v) {
+				return nil
+			}
+			var vm map[string]json.RawMessage
+			if err := json.Unmarshal(v, &vm); err != nil {
+				return nil
+			}
+			if !isArrayRaw(vm["items"]) {
+				return nil
+			}
+			if t, ok := vm["ts"]; !ok || !isNumberFinite(t) {
+				return nil
+			}
+			expl[id] = v
+		}
+		inc.expl = expl
+	}
+	return inc
 }
 
 // ——— SQLite 槽位表（(subject, user) 复合主键；user='' 旧版兼容槽）———
@@ -276,6 +476,11 @@ func openStore(path string) (*slotStore, error) {
 		return nil, err
 	}
 	if err := migrateSlots(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// 派生行表启动全量重建（幂等自愈：行是 blob 的视图，坏了重展开即可）；失败同样拒启
+	if err := rebuildRows(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -406,15 +611,30 @@ func (st *slotStore) putSlot(w http.ResponseWriter, r *http.Request, subject, us
 	if ok {
 		cur = parseBlob(current)
 	}
-	merged := mergeBlobs(cur, &blobDoc{store: inc.store, shuf: inc.shuf, clearedAt: inc.clearedAt}, time.Now().UnixMilli())
+	merged := mergeBlobs(cur, &blobDoc{store: inc.store, shuf: inc.shuf, clearedAt: inc.clearedAt, hist: inc.hist, expl: inc.expl}, time.Now().UnixMilli())
 	blob, err := json.Marshal(merged)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal"})
 		return
 	}
-	if _, err := st.db.Exec(
+	// 整 blob（事实源）与逐题行（派生读模型）同事务落库：行永远与 blob 一致
+	tx, err := st.db.Begin()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
 		`INSERT INTO sync (subject, "user", blob, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(subject, "user") DO UPDATE SET blob = excluded.blob, updated_at = excluded.updated_at`,
 		subject, user, string(blob), merged.UpdatedAt); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
+		return
+	}
+	if err := expandSlotRows(tx, subject, user, merged); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
 		return
 	}

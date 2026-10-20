@@ -34,6 +34,62 @@ describe("mergeBlobs", () => {
   });
 });
 
+describe("mergeBlobs v2：hist 并集去重留 10、expl ts LWW", () => {
+  const e = (ts, u) => ({ u: u || "答", s: 100, ts });
+  const ex = (ts, src) => ({ source: src || "material", items: [{ key: "A", correct: true, why: "对" }], ts });
+  it("两端皆无 extras 段 → 输出不含 hist/expl 键（旧版形状不变）", () => {
+    const m = S.mergeBlobs(blob({ 1: rec("a", 10) }), blob({ 2: rec("b", 20) }));
+    expect("hist" in m).toBe(false);
+    expect("expl" in m).toBe(false);
+  });
+  it("hist 逐题并集：同 ts 先到先得（a 端优先）、升序留最近 10", () => {
+    const ha = { 1: [e(5), e(7, "甲")] };
+    const hb = { 1: [e(7, "乙"), e(6), e(8)] };
+    const m = S.mergeBlobs(Object.assign(blob({}), { hist: ha }), Object.assign(blob({}), { hist: hb }));
+    expect(m.hist["1"].map((x) => x.ts)).toEqual([5, 6, 7, 8]);
+    expect(m.hist["1"][2].u).toBe("甲"); // 同 ts=7 取 a 端
+    const big = { 2: Array.from({ length: 14 }, (_, i) => e(i + 1)) };
+    const m2 = S.mergeBlobs(Object.assign(blob({}), { hist: big }), Object.assign(blob({}), { hist: {} }));
+    expect(m2.hist["2"].length).toBe(10);
+    expect(m2.hist["2"][9].ts).toBe(14); // 留的是最近的
+  });
+  it("hist 受 clearedAt 压制（含对端取大后），全压完该题不出键但 hist 段在", () => {
+    const m = S.mergeBlobs(
+      Object.assign(blob({}, null, 100), { hist: { 1: [e(50), e(150)] } }),
+      Object.assign(blob({}), { hist: { 2: [e(90)] } }),
+    );
+    expect(m.hist["1"].map((x) => x.ts)).toEqual([150]);
+    expect(m.hist["2"]).toBeUndefined();
+  });
+  it("expl 逐题 ts LWW，不受 clearedAt 压制", () => {
+    const m = S.mergeBlobs(
+      Object.assign(blob({}, null, 999), { expl: { 1: ex(10), 2: ex(500, "search") } }),
+      Object.assign(blob({}), { expl: { 1: ex(20, "search") } }),
+    );
+    expect(m.expl["1"].ts).toBe(20);
+    expect(m.expl["1"].source).toBe("search");
+    expect(m.expl["2"].ts).toBe(500); // 单端独有无条件保留
+  });
+});
+
+describe("payloadExtras v2（hist/expl 上云载荷清洗）", () => {
+  it("hist 剔除缺/坏 ts 条目与非对象条目；空题不出键", () => {
+    const out = S.payloadExtras({ 1: [{ u: "a", s: 1, ts: 5 }, { u: "b", s: 1 }, "坏", { u: "c", s: null, ts: 7 }], 2: [{ u: "d" }] }, {}, 100);
+    expect(Object.keys(out.hist)).toEqual(["1"]);
+    expect(out.hist["1"].map((x) => x.ts)).toEqual([5, 7]);
+  });
+  it("expl 缺 items 整条剔除；缺 ts 补 now，已有 ts 原样", () => {
+    const out = S.payloadExtras({}, { 1: { source: "ref", items: [{ key: "A" }] }, 2: { items: [], ts: 42 }, 3: { source: "x" } }, 100);
+    expect(out.expl["1"].ts).toBe(100);
+    expect(out.expl["2"].ts).toBe(42);
+    expect(out.expl["3"]).toBeUndefined();
+  });
+  it("两端皆空 → 两个空对象（调用侧据此不出键）", () => {
+    const out = S.payloadExtras({}, {}, 1);
+    expect(out).toEqual({ hist: {}, expl: {} });
+  });
+});
+
 describe("payloadStore（快照 diff 出墓碑）", () => {
   const now = 10000;
   it("当前无、快照有（活记录）→ 发新墓碑", () => {
@@ -115,6 +171,34 @@ describe("prefetch 多用户槽位 URL", () => {
       // 分区键自然隔离：码用户的快照写在带码后缀的键上，两身份快照互不覆盖
       expect(m.has("k13180.v1.ab2cde.syncsnap")).toBe(true);
       expect(m.has("k13180.v1.syncsnap")).toBe(true);
+    } finally {
+      if (saved.ls === undefined) delete globalThis.localStorage; else globalThis.localStorage = saved.ls;
+      if (saved.loc === undefined) delete globalThis.location; else globalThis.location = saved.loc;
+      globalThis.fetch = saved.fetch;
+    }
+  });
+
+  it("v2：对端 hist/expl 随 prefetch 写回按码分区的派生键", async () => {
+    const saved = { ls: globalThis.localStorage, loc: globalThis.location, fetch: globalThis.fetch };
+    const m = new Map();
+    globalThis.localStorage = {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: (k) => m.delete(k),
+    };
+    globalThis.location = { protocol: "http:" };
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({
+        blob: {
+          store: {}, shuf: null, clearedAt: 0, updatedAt: Date.now(),
+          hist: { 3: [{ u: "云", s: 80, ts: 9 }] }, expl: { 3: { source: "search", items: [], ts: 8 } },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    try {
+      await S.prefetch("k.net.v1.cd2xyz", "cd2xyz");
+      await S.flushNow();
+      expect(JSON.parse(m.get("k.net.v1.cd2xyz.hist"))["3"][0].u).toBe("云");
+      expect(JSON.parse(m.get("k.net.v1.cd2xyz.expl"))["3"].source).toBe("search");
     } finally {
       if (saved.ls === undefined) delete globalThis.localStorage; else globalThis.localStorage = saved.ls;
       if (saved.loc === undefined) delete globalThis.location; else globalThis.location = saved.loc;

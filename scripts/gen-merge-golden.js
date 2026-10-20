@@ -33,6 +33,41 @@ function randRec(rnd) {
   return rec;
 }
 
+// randHist：v2 历史归档段（qid → [{u,s,ts}…]）——刻意造出 >10 条（触发裁剪）、两端同 ts（触发去重）、
+// 与 clearedAt 交叠的 ts（触发压制）；35% 概率整段缺失（旧版形状）。
+function randHist(rnd) {
+  if (rnd() < 0.35) return null;
+  const h = {};
+  const n = Math.floor(rnd() * 12);
+  for (let i = 0; i < n; i++) {
+    const id = String(1 + Math.floor(rnd() * 40));
+    const arr = [];
+    const m = Math.floor(rnd() * 14); // 允许 0 条与超 10 条
+    for (let j = 0; j < m; j++) {
+      const ts = Math.floor(rnd() * 6000);
+      arr.push({ u: "答" + Math.floor(rnd() * 9), s: [null, 0, 50, 100][Math.floor(rnd() * 4)], ts });
+    }
+    if (arr.length) h[id] = arr;
+  }
+  return h;
+}
+
+// randExpl：v2 解析缓存段（qid → {source,items,ts}）；40% 概率整段缺失。
+function randExpl(rnd) {
+  if (rnd() < 0.4) return null;
+  const e = {};
+  const n = Math.floor(rnd() * 8);
+  for (let i = 0; i < n; i++) {
+    const id = String(1 + Math.floor(rnd() * 40));
+    e[id] = {
+      source: rnd() < 0.5 ? "material" : "search",
+      items: [{ key: "A", correct: true, why: "理由甲" }, { key: "B", correct: false, why: "理由乙" }],
+      ts: Math.floor(rnd() * 6000),
+    };
+  }
+  return e;
+}
+
 function randBlob(rnd) {
   const store = {};
   const n = Math.floor(rnd() * 25);
@@ -41,7 +76,11 @@ function randBlob(rnd) {
   const shuf = k < 0.4 ? { picked: [1, 2, 3], ts: Math.floor(rnd() * 6000) }
     : k < 0.6 ? { cleared: true, ts: Math.floor(rnd() * 6000) } : null;
   const clearedAt = rnd() < 0.3 ? Math.floor(rnd() * 4000) : 0;
-  return { store, shuf, clearedAt };
+  const b = { store, shuf, clearedAt };
+  const hist = randHist(rnd), expl = randExpl(rnd);
+  if (hist) b.hist = hist;
+  if (expl) b.expl = expl;
+  return b;
 }
 
 // ——— 合并夹具：60 组随机两端 + 4 组退化形态（null 端、缺字段、空对象）———
@@ -57,6 +96,12 @@ const merges = [];
     [null, { store: { 1: { u: "x", ts: 5 } }, shuf: { picked: [1], ts: 5 }, clearedAt: 0 }],
     [{ store: { 2: { u: null, s: null, ts: 9 } } }, { clearedAt: 9 }],
     [{}, {}],
+    // v2 定向退化组：hist 同 ts 两端先到先得（a 端 y 胜 b 端 z）、ts≤clearedAt 压制（ts4 出局）、
+    // 仅剩 ts6；expl 平手取 a 端之外按 ts 新者胜（b 端 ts2 胜 a 端 ts1）。
+    [{ store: {}, shuf: null, clearedAt: 5, hist: { 7: [{ u: "x", s: 1, ts: 4 }, { u: "y", s: 0, ts: 6 }] }, expl: { 3: { items: [], ts: 1 } } },
+      { hist: { 7: [{ u: "z", s: 9, ts: 6 }] }, expl: { 3: { items: [{ key: "A", correct: true, why: "w" }], ts: 2 } } }],
+    // hist/expl 全被压制/空段：键仍出现但值为空对象（与「本就没有该段」区分，旧版形状不受影响）
+    [{ clearedAt: 100, hist: { 1: [{ u: "a", s: 1, ts: 5 }] }, expl: null }, { hist: { 2: [] } }],
   ];
   for (const [a, b] of degenerate) merges.push({ a, b, out: S.mergeBlobs(a, b, NOW) });
 }
@@ -75,8 +120,16 @@ const rawCases = [];
     const shufIn = rnd() < 0.5 ? { picked: [1], ts: NOW } : null;
     const snapShufIn = rnd() < 0.5 ? { picked: [2], ts: 1 } : null;
     const shufOut = S.payloadShuf(shufIn, snapShufIn, NOW);
-    rawCases.push({ cur, snap, skip, shufIn, snapShufIn, payload, shufOut });
-    bodies.push(JSON.stringify({ store: payload, shuf: shufOut, clearedAt: 0 }));
+    // v2：extras 走前端 payloadExtras 真实产物（含畸形剔除与补 ts），再进 Go 契约校验
+    const histIn = randHist(rnd), explIn = randExpl(rnd);
+    const extras = S.payloadExtras(histIn || {}, explIn || {}, NOW);
+    const histOut = Object.keys(extras.hist).length ? extras.hist : null;
+    const explOut = Object.keys(extras.expl).length ? extras.expl : null;
+    rawCases.push({ cur, snap, skip, shufIn, snapShufIn, payload, shufOut, histIn, explIn, histOut, explOut });
+    const body = { store: payload, shuf: shufOut, clearedAt: 0 };
+    if (histOut) body.hist = histOut;
+    if (explOut) body.expl = explOut;
+    bodies.push(JSON.stringify(body));
   }
 }
 
