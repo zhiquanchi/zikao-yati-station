@@ -1,6 +1,6 @@
 // 作答进度云同步（经典脚本 · 零依赖）：同源相对路径 api/store——线上由门户落 SQLite，
 // 本机经 server.js 代理到 STORE_API（默认线上站），因此本机与线上读写同一份云端进度。
-// 合并口径与门户 store.js / 04751 站 sync.js 逐字一致（三处同改）：
+// 合并口径与门户 portal/store.js 逐字一致（单仓两处实现，由 test/merge_xcheck.test.js 交叉校验锁定）：
 //   store 逐题比 rec.ts 新者胜；ts ≤ clearedAt（两端取大）的记录一律作废；
 //   本地删除 = 墓碑记录 {u:null,s:null,ts}（与合法「看过未作答」同形，判分/渲染均视为未答）；
 //   shuf 按 ts 新者胜，关闭组卷用 {cleared:true,ts} 墓碑压制对端旧卷。

@@ -1,15 +1,23 @@
-// 门户路由回归测试（bun test）：重定向、双科静态、判分代理按科目分流、降级与防穿越。
+// 门户路由回归测试（bun test）：科目清单驱动（读 portal/subjects.json，加科目零改用例）——
+// 重定向、各科静态按前缀分流、判分代理独立上游、降级、防穿越、/__health。
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import path from "node:path";
 
 const ROOT = import.meta.dir;
-const PORT = 8895;
-const FAKE_OS = 8897, FAKE_NET = 8898, DEAD = 8896;
-let portal, fakeOs, fakeNet;
+const PORT = 8925;
+const FAKE_LIVE = 8926; // 在线的假判分上游
+const DEAD_BASE = 8927; // 离线科目上游端口段
+let portal, fakeLive;
+
+// 清单驱动
+const manifest = await Bun.file(path.join(ROOT, "..", "subjects.json")).json();
+const prefixes = manifest.map((s) => s.prefix);
+const primary = (manifest.find((s) => s.primary) || manifest[0]).prefix;
+const up = (p) => p.toUpperCase();
 
 // 假科目目录：各放一个 index.html 便于断言来源
-function fixture(name, marker) {
-  const dir = path.join(ROOT, ".fixtures", name);
+function fixture(prefix, marker) {
+  const dir = path.join(ROOT, ".fixtures", prefix);
   Bun.write(path.join(dir, "index.html"), "<h1>" + marker + "</h1>");
   Bun.write(path.join(dir, "styles.css"), "/*x*/");
   return dir;
@@ -24,53 +32,62 @@ async function waitUp(url, tries = 60) {
 }
 
 beforeAll(async () => {
-  fakeOs = Bun.serve({ hostname: "127.0.0.1", port: FAKE_OS, fetch: () => Response.json({ engine: "ai", subject: "os", score: 88, per: [] }) });
-  fakeNet = Bun.serve({ hostname: "127.0.0.1", port: FAKE_NET, fetch: () => Response.json({ engine: "ai", subject: "net", score: 66, per: [] }) });
-  const proc = Bun.spawn(["bun", "portal.js"], {
-    cwd: path.join(ROOT, ".."),
-    env: {
-      ...process.env, PORT: String(PORT),
-      OS_ROOT: fixture("os", "OS-SITE"), NET_ROOT: fixture("net", "NET-SITE"),
-      GRADE_OS: `http://127.0.0.1:${FAKE_OS}/api/grade`,
-      GRADE_NET: `http://127.0.0.1:${DEAD}/api/grade`, // 未启动科目 → svc_down
-    },
-    stdout: "ignore", stderr: "ignore",
+  fakeLive = Bun.serve({ hostname: "127.0.0.1", port: FAKE_LIVE, fetch: () => Response.json({ engine: "ai", subject: "live", score: 88, per: [] }) });
+  const env = { ...process.env, PORT: String(PORT) };
+  prefixes.forEach((pre, i) => {
+    env[up(pre) + "_ROOT"] = fixture(pre, pre.toUpperCase() + "-SITE");
+    // 第一个科目接活上游，其余接死端口（验证按科目独立分流与 502 降级）
+    env["GRADE_" + up(pre)] = i === 0 ? `http://127.0.0.1:${FAKE_LIVE}/api/grade` : `http://127.0.0.1:${DEAD_BASE + i}/api/grade`;
   });
+  const proc = Bun.spawn(["bun", "portal.js"], { cwd: path.join(ROOT, ".."), env, stdout: "ignore", stderr: "ignore" });
   portal = proc;
   await waitUp(`http://127.0.0.1:${PORT}/`);
 });
 
-afterAll(() => { portal?.kill(); fakeOs?.stop(); fakeNet?.stop(); });
+afterAll(() => { portal?.kill(); fakeLive?.stop(); });
 
 describe("门户路由", () => {
-  it("/ 与裸 /os /net 重定向到带斜杠入口", async () => {
-    for (const [p, loc] of [["/", "/os/"], ["/os", "/os/"], ["/net", "/net/"]]) {
-      const r = await fetch(`http://127.0.0.1:${PORT}${p}`, { redirect: "manual" });
-      expect(r.status).toBe(302);
-      expect(r.headers.get("location")).toBe(loc);
+  it("裸根落主科目；各科目裸前缀补斜杠", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/`, { redirect: "manual" });
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe(`/${primary}/`);
+    for (const pre of prefixes) {
+      const rr = await fetch(`http://127.0.0.1:${PORT}/${pre}`, { redirect: "manual" });
+      expect(rr.status).toBe(302);
+      expect(rr.headers.get("location")).toBe(`/${pre}/`);
     }
   });
-  it("双科静态按前缀分流、未知路径 404", async () => {
-    expect(await (await fetch(`http://127.0.0.1:${PORT}/os/`)).text()).toContain("OS-SITE");
-    expect(await (await fetch(`http://127.0.0.1:${PORT}/net/`)).text()).toContain("NET-SITE");
-    expect((await fetch(`http://127.0.0.1:${PORT}/os/styles.css`)).status).toBe(200);
-    expect((await fetch(`http://127.0.0.1:${PORT}/other/`)).status).toBe(404);
+  it("各科静态按前缀分流、未知路径 404", async () => {
+    for (const pre of prefixes) {
+      expect(await (await fetch(`http://127.0.0.1:${PORT}/${pre}/`)).text()).toContain(pre.toUpperCase() + "-SITE");
+      expect((await fetch(`http://127.0.0.1:${PORT}/${pre}/styles.css`)).status).toBe(200);
+    }
+    expect((await fetch(`http://127.0.0.1:${PORT}/nosuch/`)).status).toBe(404);
   });
   it("判分代理按科目走各自上游；上游不可达返回 502 svc_down", async () => {
     const body = JSON.stringify({ stem: "题干", ref: "参考答案", points: ["要点"], answer: "作答" });
-    const rOs = await fetch(`http://127.0.0.1:${PORT}/os/api/grade`, { method: "POST", headers: { "content-type": "application/json" }, body });
-    expect(rOs.status).toBe(200);
-    expect((await rOs.json()).subject).toBe("os");
-    const rNet = await fetch(`http://127.0.0.1:${PORT}/net/api/grade`, { method: "POST", headers: { "content-type": "application/json" }, body });
-    expect(rNet.status).toBe(502);
-    expect((await rNet.json()).error).toBe("svc_down");
-    expect((await fetch(`http://127.0.0.1:${PORT}/os/api/grade`)).status).toBe(405);
+    const live = prefixes[0];
+    const rLive = await fetch(`http://127.0.0.1:${PORT}/${live}/api/grade`, { method: "POST", headers: { "content-type": "application/json" }, body });
+    expect(rLive.status).toBe(200);
+    expect((await rLive.json()).subject).toBe("live");
+    for (const pre of prefixes.slice(1)) {
+      const r = await fetch(`http://127.0.0.1:${PORT}/${pre}/api/grade`, { method: "POST", headers: { "content-type": "application/json" }, body });
+      expect(r.status).toBe(502);
+      expect((await r.json()).error).toBe("svc_down");
+    }
+    expect((await fetch(`http://127.0.0.1:${PORT}/${live}/api/grade`)).status).toBe(405);
   });
   it("目录穿越被拒（编码与点段都拦下，绝不逃逸科目根）", async () => {
-    for (const p of ["/os/..%2f..%2fportal.js", "/os/%2e%2e/%2e%2e/portal.js", "/net/../../../../etc/passwd"]) {
-      const r = await fetch(`http://127.0.0.1:${PORT}${p}`);
-      expect([200]).not.toContain(r.status);
-      expect(r.status === 200 && (await r.text()).includes("Bun.serve")).toBe(false);
+    for (const pre of prefixes) {
+      for (const p of [`/${pre}/..%2f..%2fportal.js`, `/${pre}/%2e%2e/%2e%2e/portal.js`, `/${pre}/../../../../etc/passwd`]) {
+        const r = await fetch(`http://127.0.0.1:${PORT}${p}`);
+        expect([200]).not.toContain(r.status);
+      }
     }
+  });
+  it("/__health 汇报全部科目前缀", async () => {
+    const j = await (await fetch(`http://127.0.0.1:${PORT}/__health`)).json();
+    expect(j.ok).toBe(true);
+    expect(j.subjects).toEqual(prefixes);
   });
 });
