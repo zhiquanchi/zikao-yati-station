@@ -1,0 +1,24 @@
+# 云同步服务 sync-svc（多用户改造）：与判分服务同 module 的第二命令（grade-svc/cmd/syncsvc）。
+# 科目无关（subject 仅作槽位分区键）、不持密钥、不吃 SUBJECT_DIR；SQLite 纯 Go 驱动（modernc），CGO_ENABLED=0 交叉构建。
+# 构建上下文 = 仓库根：docker build -f grade-svc/Dockerfile.sync .
+# 数据卷 portal-store 挂 /data：旧版 sync.db 原地复用，启动时自动完成单槽→(科目,用户) 表迁移。
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+# 国内构建慢/不通时可：docker build --build-arg GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY
+ENV GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}
+COPY grade-svc/go.mod grade-svc/go.sum ./
+RUN go mod download
+COPY grade-svc/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sync-svc ./cmd/syncsvc
+
+FROM alpine:3.21
+WORKDIR /app
+COPY --from=build /out/sync-svc ./sync-svc
+# 容器内绑 0.0.0.0：仅 compose 内部网络可达，compose 不映射端口到宿主（宿主 nginx 无感知）；
+# 以 root 跑以便写 snap 命名卷（属主 root，与旧门户 store 同口径）
+ENV SYNC_HOST=0.0.0.0 SYNC_PORT=8793 STORE_DB=/data/sync.db
+EXPOSE 8793
+USER root
+HEALTHCHECK --interval=5s --timeout=3s --start-period=3s CMD wget -qO- http://127.0.0.1:8793/api/health >/dev/null || exit 1
+ENTRYPOINT ["/app/sync-svc"]

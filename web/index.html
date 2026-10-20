@@ -10,7 +10,7 @@
 <header class="topbar">
   <div class="wrap">
     <h1>押题练习</h1>
-    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，作答记录自动云同步（本机与线上互通）<span id="syncChip" class="sync-chip"></span></p>
+    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，进度按同步码上云（多人共用站点各人独立）<span id="syncChip" class="sync-chip"></span></p>
     <a class="mm-entry" id="mmEntry" href="mindmap.html" style="display:none"></a>
     <div class="stats" id="stats"></div>
   </div>
@@ -53,9 +53,26 @@
 
 <footer class="foot wrap">判分为关键词/要点覆盖度的本机自动评估，仅供背诵自测，实际阅卷以考试标准为准。</footer>
 
+<dialog id="idDialog">
+  <div class="id-card">
+    <h3>云同步身份</h3>
+    <p class="id-desc" id="idDesc"></p>
+    <p class="id-code" id="idCodeRow" hidden></p>
+    <div class="id-btns">
+      <button type="button" id="idMigrate" class="chip" hidden>把这台的进度换成同步码</button>
+      <button type="button" id="idCopy" class="ghost" hidden>复制同步码</button>
+      <button type="button" id="idBack" class="ghost" hidden>退回旧版通用槽</button>
+    </div>
+    <p class="id-input"><input id="idInput" maxlength="10" autocomplete="off" spellcheck="false" placeholder="输入已有同步码续用/切换用户"><button type="button" id="idApply" class="chip">切换</button></p>
+    <p class="id-tip">记住同步码：换手机或电脑输入同一个码即续用进度。输错别人的码＝用那人的进度。</p>
+    <div class="id-btns"><button type="button" id="idClose" class="ghost">关闭</button></div>
+  </div>
+</dialog>
+
 <script src="data.js"></script>
 <script src="grading.js"></script>
 <script src="sync.js"></script>
+<script src="identity.js"></script>
 <script src="subjects.js"></script>
 <script src="app.js"></script>
 <script src="subject-switch.js"></script>

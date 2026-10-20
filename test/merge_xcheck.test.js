@@ -1,80 +1,31 @@
-// 云同步合并口径交叉校验（bun test）：前端 web/sync.js 的 mergeBlobs 与门户 portal/store.js 的 mergeBlobs
-// 是同一口径的两处实现（单仓内），本测试用固定种子的随机夹具断言两端逐字等价——
-// 替代旧「三处同改」口头约定：改任何一处合并逻辑，本测试必红。
-// 另校验契约：前端 payloadStore/payloadShuf 的输出必能通过服务端 normalizeIncoming 整形校验。
+// 云同步合并口径 golden 断言（JS 侧守卫）：多用户改造后合并逻辑跨语言两份实现——
+// 前端 web/sync.js（本测试断言）与 Go 云同步服务 grade-svc/cmd/syncsvc（store_golden_test.go 断言），
+// 两边共同对齐唯一夹具 test/fixtures/merge_golden.json（scripts/gen-merge-golden.js 生成）——
+// 改任何一处合并口径而夹具未同步刷新，对应一侧必红（跨语言「两处实现、一处守卫」）。
+// 另由载荷契约段锁定：前端 payloadStore/payloadShuf 的真实产物必过 Go 端 normalizeIncoming 且形状原样不改
+// （本测试断言「重放输入 == 夹具产物」防前端载荷生成漂移；「产物过 Go 校验」由 Go 侧 golden 断言）。
 import { describe, it, expect } from "bun:test";
 import "../web/sync.js";
-import { mergeBlobs as storeMergeBlobs, normalizeIncoming } from "../portal/store.js";
 
-const front = globalThis.SYNC.mergeBlobs;
-const NOW = 1790000000000;
+const front = globalThis.SYNC;
+const golden = await Bun.file(new URL("./fixtures/merge_golden.json", import.meta.url)).json();
+const NOW = golden.now;
 
-// 与 app.js 同款确定性 PRNG
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function randRec(rnd) {
-  const ts = Math.floor(rnd() * 6000);
-  const kind = rnd();
-  if (kind < 0.22) return { u: null, s: null, ts }; // 墓碑
-  if (kind < 0.32) return { u: null, s: null, ts, v: ts + 1 }; // 看过解析未作答
-  const rec = { u: "答" + Math.floor(rnd() * 9), s: [null, 0, 50, 100][Math.floor(rnd() * 4)], ts };
-  if (rnd() < 0.3) rec.g = { score: 60, per: [], ts }; // AI 升级结果
-  if (rnd() < 0.2) rec.v = 123; // 看过解析标记
-  return rec;
-}
-
-function randBlob(rnd) {
-  const store = {};
-  const n = Math.floor(rnd() * 25);
-  for (let i = 0; i < n; i++) store[String(1 + Math.floor(rnd() * 40))] = randRec(rnd);
-  const k = rnd();
-  const shuf = k < 0.4 ? { picked: [1, 2, 3], ts: Math.floor(rnd() * 6000) }
-    : k < 0.6 ? { cleared: true, ts: Math.floor(rnd() * 6000) } : null;
-  const clearedAt = rnd() < 0.3 ? Math.floor(rnd() * 4000) : 0;
-  return { store, shuf, clearedAt };
-}
-
-describe("sync.mergeBlobs ≡ store.mergeBlobs", () => {
-  it("固定种子 300 轮随机夹具逐字段等价", () => {
-    const rnd = mulberry32(20261020);
-    for (let i = 0; i < 300; i++) {
-      const a = randBlob(rnd), b = randBlob(rnd);
-      expect(storeMergeBlobs(a, b, NOW)).toEqual(front(a, b, NOW));
-    }
-  });
-  it("退化形态（空端、null 端、缺字段）同样等价", () => {
-    const forms = [
-      [{ store: {}, shuf: null, clearedAt: 0 }, null],
-      [null, { store: { 1: { u: "x", ts: 5 } }, shuf: { picked: [1], ts: 5 }, clearedAt: 0 }],
-      [{ store: { 2: { u: null, s: null, ts: 9 } } }, { clearedAt: 9 }],
-      [{}, {}],
-    ];
-    for (const [a, b] of forms) {
-      expect(storeMergeBlobs(a, b, NOW)).toEqual(front(a, b, NOW));
+describe("sync.mergeBlobs ≡ golden 夹具", () => {
+  it(`${golden.merges.length} 组随机/退化夹具逐字段命中`, () => {
+    for (let i = 0; i < golden.merges.length; i++) {
+      const c = golden.merges[i];
+      expect(front.mergeBlobs(c.a, c.b, NOW), "第 " + i + " 组").toEqual(c.out);
     }
   });
 });
 
-describe("前端上传载荷 ≡ 服务端整形校验", () => {
-  it("payloadStore/payloadShuf 的产物必过 normalizeIncoming", () => {
-    const rnd = mulberry32(42);
-    const S = globalThis.SYNC;
-    for (let i = 0; i < 200; i++) {
-      const cur = randBlob(rnd).store, snap = randBlob(rnd).store;
-      const skip = rnd() < 0.3;
-      const payload = S.payloadStore(cur, snap, skip, NOW);
-      const shuf = S.payloadShuf(rnd() < 0.5 ? { picked: [1], ts: NOW } : null, rnd() < 0.5 ? { picked: [2], ts: 1 } : null, NOW);
-      const incoming = normalizeIncoming({ store: payload, shuf, clearedAt: 0 });
-      expect(incoming).not.toBeNull();
-      // 墓碑与活记录原样入库（形状不改）
-      for (const k of Object.keys(payload)) expect(incoming.store[k]).toEqual(payload[k]);
+describe("前端上传载荷 ≡ golden 夹具（契约防漂移）", () => {
+  it("payloadStore/payloadShuf 按夹具输入重放逐字段一致", () => {
+    for (let i = 0; i < golden.payloads.length; i++) {
+      const c = golden.payloads[i];
+      expect(front.payloadStore(c.cur, c.snap, c.skip, NOW), "第 " + i + " 组 store").toEqual(c.payload);
+      expect(front.payloadShuf(c.shufIn, c.snapShufIn, NOW), "第 " + i + " 组 shuf").toEqual(c.shufOut);
     }
   });
 });

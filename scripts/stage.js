@@ -5,7 +5,7 @@ import path from "node:path";
 import { mkdirSync, rmSync, cpSync, existsSync } from "node:fs";
 import { loadSubjects, findSubject, WEB_DIR, ROOT } from "./config.js";
 
-const ENGINE_FILES = ["index.html", "styles.css", "app.js", "grading.js", "sync.js", "subject-switch.js", "subjects.js"];
+const ENGINE_FILES = ["index.html", "styles.css", "app.js", "grading.js", "sync.js", "identity.js", "subject-switch.js", "subjects.js"];
 const SUBJECT_FILES = ["data.js", "mindmap.html"];
 
 const ROOT_ = path.join(ROOT, "build", "stage");

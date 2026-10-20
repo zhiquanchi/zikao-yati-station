@@ -38,6 +38,22 @@ body {
   background: rgba(255,255,255,.16); font-size: 12px; white-space: nowrap;
 }
 .sync-chip.off { opacity: .8; }
+/* 云同步芯片可点＝多用户身份弹层入口（http(s) 下 app.js 挂类） */
+.sync-chip.id-clickable { cursor: pointer; }
+.sync-chip.id-clickable:hover { background: rgba(255,255,255,.3); }
+/* 云同步身份弹层（index.html #idDialog，app.js identityUI 驱动） */
+#idDialog { border: none; border-radius: 16px; padding: 0; max-width: 420px; width: calc(100vw - 40px); box-shadow: 0 18px 60px rgba(20,28,70,.25); }
+#idDialog::backdrop { background: rgba(28,35,51,.45); }
+.id-card { padding: 20px 22px; }
+.id-card h3 { margin: 0 0 10px; font-size: 16px; color: var(--ink); }
+.id-desc { margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.id-code { margin: 4px 0 8px; font-size: 14px; color: var(--ink); }
+.id-code b { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: 2px; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 2px 10px; font-size: 15px; }
+.id-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+.id-input { display: flex; gap: 8px; margin: 10px 0 0; }
+.id-input input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; font-size: 14px; }
+.id-tip { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+#idDialog button.ghost:hover { color: var(--accent); border-color: var(--accent); }
 .stats { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .stat {
   background: rgba(255,255,255,.14); border-radius: 10px; padding: 6px 14px;

@@ -1,11 +1,15 @@
-// 作答进度云同步（经典脚本 · 零依赖）：同源相对路径 api/store——线上由门户落 SQLite，
-// 本机经 server.js 代理到 STORE_API（默认线上站），因此本机与线上读写同一份云端进度。
-// 合并口径与门户 portal/store.js 逐字一致（单仓两处实现，由 test/merge_xcheck.test.js 交叉校验锁定）：
+// 作答进度云同步（经典脚本 · 零依赖）：同源相对路径 api/store[/<同步码>]——线上由门户转发到 Go 云同步服务
+// （grade-svc/cmd/syncsvc，多用户按 (科目,用户) 分槽，不带码＝旧版兼容全局槽），
+// 本机经 server.js 代理到 STORE_API（默认线上站），因此本机与线上读写同一云端槽位。
+// 合并口径与 Go 服务端跨语言两份实现，由 test/fixtures/merge_golden.json 单一夹具逐字段锁定
+//   （JS 侧 test/merge_xcheck.test.js、Go 侧 grade-svc/store_golden_test.go——改口径两实现同改后重跑
+//   scripts/gen-merge-golden.js 刷新夹具，任何单侧漂移必红）：
 //   store 逐题比 rec.ts 新者胜；ts ≤ clearedAt（两端取大）的记录一律作废；
 //   本地删除 = 墓碑记录 {u:null,s:null,ts}（与合法「看过未作答」同形，判分/渲染均视为未答）；
 //   shuf 按 ts 新者胜，关闭组卷用 {cleared:true,ts} 墓碑压制对端旧卷。
 // 策略：页面加载先拉取合并再渲染（超时 2.5s 降级纯本机）；此后 save() 触发防抖 1.5s 上推，
 //   服务端返回合并结果写回存储与内存（只按 ts 覆盖、绝不删除未同步的在编草稿，打字竞态安全）。
+//   「清空记录」的 clearedAt 压制仅在本人槽位内生效（本地键由身份分区，见 web/identity.js）。
 (function (root) {
   "use strict";
   const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -51,14 +55,17 @@
     return target;
   }
 
-  const api = { mergeBlobs, payloadStore, payloadShuf, applyInto, prefetch, schedule, markCleared };
+  const api = { mergeBlobs, payloadStore, payloadShuf, applyInto, prefetch, schedule, markCleared, flushNow };
   root.SYNC = api; // 浏览器挂 window、Bun 测试挂 globalThis
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
-  // ——— 浏览器侧：键名由基础 KEY 派生（与 app.js 约定一致），全程静默降级 ———
+  // ——— 浏览器侧：键名由基础 KEY 派生（与 app.js 约定一致，KEY 已含同步码分区后缀），全程静默降级 ———
   let KEY = "", SKEY = "", SNAPK = "", CLCK = "";
+  let USER = ""; // 同步码（空串＝旧版兼容全局槽），拼进 api/store URL
   let ready = false; // http(s) 且接口未被永久判死
   let timer = null, pushing = false, pending = null, dirty = false;
+
+  const apiUrl = () => "api/store" + (USER ? "/" + USER : "");
 
   const ls = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -84,18 +91,20 @@
   function setStatus(cls, text) {
     const el = typeof document !== "undefined" && document.getElementById && document.getElementById("syncChip");
     if (!el) return;
-    el.className = "sync-chip " + cls;
+    el.classList.remove("on", "off"); // 只换状态类：不得整体赋值 className 抹掉外部挂的 id-clickable 等类
+    el.classList.add(cls);
     el.textContent = text;
   }
   const hm = () => { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
 
-  async function prefetch(key) {
+  async function prefetch(key, user) {
     KEY = String(key || ""); SKEY = KEY + ".shuffle"; SNAPK = KEY + ".syncsnap"; CLCK = KEY + ".synccleared";
+    USER = String(user || "");
     if (typeof location === "undefined" || (location.protocol !== "http:" && location.protocol !== "https:")) return; // file:// 保持纯本机
     ready = true;
     let remote = null;
     try {
-      const res = await fetch("api/store", { signal: AbortSignal.timeout(2500) });
+      const res = await fetch(apiUrl(), { signal: AbortSignal.timeout(2500) });
       if (!res.ok) throw new Error(String(res.status));
       remote = (await res.json()).blob;
     } catch (e) {
@@ -123,7 +132,7 @@
         shuf: payloadShuf(pending.shuf, snap.shuf, Date.now()),
         clearedAt,
       };
-      const res = await fetch("api/store", {
+      const res = await fetch(apiUrl(), {
         method: "PUT", headers: { "content-type": "application/json" },
         body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
       });
@@ -155,6 +164,13 @@
   function markCleared() {
     if (!ready) return;
     ls.set(CLCK, String(Date.now()));
+  }
+
+  // 身份切换/迁移前收尾：立即推完防抖队列中的待传改动再换分区重载，避免最后一笔编辑滞留云端之外
+  function flushNow() {
+    if (!ready) return Promise.resolve();
+    if (timer != null) { clearTimeout(timer); timer = null; }
+    return pending ? push() : Promise.resolve();
   }
 
   if (typeof document !== "undefined" && document.addEventListener) {

@@ -2,10 +2,10 @@
 // 科目清单读 portal/subjects.json（scripts/build.js 依据全部 subjects/<科目>/subject.json 生成，勿手改），
 // 裸根 / 落主科目（primary）。新增科目只需进 subjects/ 并重新 build，门户自动纳入，无需改本文件。
 // POST /<科目>/api/grade 代理到该科目的 Go 判分服务（GRADE_<PREFIX大写>），不可达返回 502 svc_down（前端据此降级本机估分）。
-// /<科目>/api/store 作答进度云同步（store.js · bun:sqlite，每科目全局单槽，服务端合并为收敛点）。
-// 本地调试可用 <PREFIX>_ROOT / GRADE_<PREFIX大写> / PORT / STORE_DB 环境变量覆盖根目录、判分上游等。
+// GET/PUT /<科目>/api/store[/<同步码>] 云同步代理到 Go 云同步服务 sync-svc（SYNC_API，槽位与合并口径见
+// grade-svc/cmd/syncsvc——多用户按码分槽，不带码＝旧版兼容全局槽；门户不执行业务逻辑，与判分代理同理）。
+// 本地调试可用 <PREFIX>_ROOT / GRADE_<PREFIX大写> / SYNC_API / PORT 环境变量覆盖根目录、判分上游等。
 import path from "node:path";
-import { handleStore } from "./store.js";
 
 // 中文目录名 URL 会百分号编码，用 import.meta.dir 直拼（bun ESM 特性）
 const manifest = await Bun.file(path.join(import.meta.dir, "subjects.json")).json();
@@ -14,6 +14,7 @@ const primary = (manifest.find((s) => s.primary) || manifest[0]).prefix;
 const up = (p) => p.toUpperCase();
 const ROOTS = Object.fromEntries(manifest.map((s) => [s.prefix, process.env[up(s.prefix) + "_ROOT"] || "/srv/" + s.prefix]));
 const GRADE = Object.fromEntries(manifest.map((s) => [s.prefix, process.env["GRADE_" + up(s.prefix)] || "http://grade-svc-" + s.prefix + ":8792/api/grade"]));
+const SYNC_UP = process.env.SYNC_API || "http://sync-svc:8793";
 const rePrefix = new RegExp("^/(" + prefixes.join("|") + ")(?:/(.*))?$");
 
 const redir = (loc) => new Response(null, { status: 302, headers: { location: loc } });
@@ -52,8 +53,27 @@ const server = Bun.serve({
       }
     }
 
-    // 作答进度云同步：store.js 直接读写 SQLite（合并口径与前端 sync.js 一致，交叉校验见 test/merge_xcheck.test.js）
-    if (rest === "api/store") return handleStore(subject, req);
+    // 作答进度云同步代理：转发到 Go 云同步服务（sync-svc）——槽位=(科目,用户)，带码即私有槽，
+    // 不带码走旧版兼容全局槽；合并/校验/落库业务逻辑全在 Go 端，门户仅搬运（超时 30s 富余覆盖慢网络 PUT）。
+    if (rest === "api/store" || rest.startsWith("api/store/")) {
+      const tail = rest.slice("api/store".length); // "" 或 "/<同步码>"
+      try {
+        const up2 = await fetch(SYNC_UP + "/store/" + subject + tail, {
+          method: req.method,
+          headers: { "content-type": "application/json" },
+          body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
+          signal: AbortSignal.timeout(30000),
+        });
+        return new Response(await up2.text(), {
+          status: up2.status,
+          headers: { "content-type": up2.headers.get("content-type") || "application/json" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "svc_down", detail: String((e && e.message) || e) }), {
+          status: 502, headers: { "content-type": "application/json" },
+        });
+      }
+    }
 
     // 静态文件：去前缀后在科目根内解析，防目录穿越
     let rel = rest === "" ? "index.html" : path.normalize("/" + rest).replace(/^\/+/, "");

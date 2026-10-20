@@ -2,7 +2,7 @@
 
 2026 年 10 月自考押题自动判分练习站。**运行时为 Bun**（可选的简答 AI 判分服务为 Go）。一个仓库承载任意多个科目：
 
-- **共享引擎只有一份**：`web/`（前端）、`grade-svc/`（Go 判分服务）、`portal/`（门户与云同步）——科目之间零复制、零手拷同步。
+- **共享引擎只有一份**：`web/`（前端）、`grade-svc/`（Go 判分服务 + `cmd/syncsvc` 云同步存储）、`portal/`（门户网关）——科目之间零复制、零手拷同步。
 - **科目 = 一个目录**：`subjects/<科目>/` 里只放科目身份（`subject.json`）、题库源数据与专属解析器、思维导图等，互不污染。
 - **部署全自动遍历科目**：`./deploy.sh` 按 `subjects/` 清单生成前端暂存、判分镜像、nginx location 与 compose，加科目不改任何脚本。
 
@@ -20,12 +20,12 @@ bun run start os13180        # 本地跑一科（默认端口读 subject.json；
 bun run build [科目…]        # 重建题库 data.js/questions.json 并刷新科目清单（缺省＝全部）
 bun run stage [科目…]        # 合成部署形态 build/stage/<前缀>/（也可双击其中 index.html 本机直开）
 ./start-ai.sh os13180        # 本地联调 AI 判分（后台 Go 服务 + 前台静态站，需先 export QWEN_API_KEY=sk-xxx）
-bun test                     # 共享引擎回归 + 逐科目数据不变量 + 云同步交叉校验
-cd grade-svc && go test ./... # Go 判分服务单测（假上游，零真实网络）
+bun test                     # 共享引擎回归 + 逐科目数据不变量 + 云同步 golden/槽位回归（store.test.js 构建并起 Go sync-svc，依赖 go 工具链）
+cd grade-svc && go test ./... # Go 判分与云同步服务单测（假上游/临时 SQLite，零真实网络）
 ./deploy.sh                  # 线上一键发布（遍历全部科目，幂等）
 ```
 
-线上统一入口 http://121.40.43.229/ （裸根自动落主科目操作系统）。**部署约定：本机不常驻服务**——`bun run start` 的 `/api/grade` 与 `/api/store` 默认都代理到线上，本机刷题与线上同源同进度；`./start-ai.sh` 仅本地联调 AI 时用 `GRADE_API` 覆盖为本地 Go 服务。
+- 线上统一入口 http://121.40.43.229/ （裸根自动落主科目操作系统）。**部署约定：本机不常驻服务**——`bun run start` 的 `/api/grade` 与 `/api/store` 默认都代理到线上，本机与线上同一同步码即同一份云端进度（未设码的旧版设备继续用旧版全局槽，本机线上同样互通）；`./start-ai.sh` 仅本地联调 AI 时用 `GRADE_API` 覆盖为本地 Go 服务。
 
 ## 新增一个科目（工作流）
 
@@ -43,7 +43,7 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 ## 仓库结构
 
 ```
-├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js subject-switch.js
+├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js subject-switch.js
 │   └── subjects.js           # 由 build 依据全部 subject.json 生成（切换器数据源，勿手改）
 ├── subjects/<科目>/
 │   ├── subject.json          # 科目身份唯一源：prefix/code/中文名/标题/storageKey/端口/特性开关/组卷参数/思维导图
@@ -51,10 +51,10 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 │   ├── data.js               # 生成物（有意提交；QUIZ_DATA.meta 即 subject.json 的浏览器侧镜像）
 │   ├── mindmap.html          # 考点思维导图页（数据内联，科目产物）
 │   └── grade/reference.md    # 可选：单选逐项解析参考资料（须与根导图逐字一致，test/ref_sync.test.js 守）
-├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入，无 go:embed）
-├── portal/                   # portal.js（科目清单驱动）· store.js（bun:sqlite 云同步）· subjects.json（生成的门户路由清单）
-├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · build.js/stage.js/gen-compose.js/new-subject.js
-├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + sync↔store 交叉 + 代理/清单守卫
+├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入）+ cmd/syncsvc（云同步存储：合并/校验/落库，科目无关）+ Dockerfile.sync
+├── portal/                   # portal.js（科目清单驱动、api/store 纯转发到 sync-svc）· subjects.json（生成的门户路由清单）
+├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · build.js/stage.js/gen-compose.js/new-subject.js/gen-merge-golden.js
+├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + 云同步 golden/身份/槽位交叉 + 代理/清单守卫
 ├── server.js                 # 本地开发服务器（科目参数、静态双根、代理线上）
 ├── start-ai.sh               # 本地 AI 判分一键起（科目参数）
 └── deploy.sh                 # 线上一键发布（遍历科目）
@@ -71,8 +71,8 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 - **批量提交**：作答自动存草稿（刷新不丢），底部悬浮条「已作答未提交 N 题」→「批量提交评分」一次性判分弹汇总（题数/平均分/满分题数）。
 - 顶部按章节/题型/状态（未作答、待提高 <60、已掌握 ≥80）筛选，支持题干搜索、背答案模式。
 - **手机适配**：≤640px 工具栏折叠「☰ 筛选设置」吸顶；输入控件 16px 防 iOS 聚焦缩放；触控热区加大、悬浮条避手势横条。手机连同 WiFi：`HOST=0.0.0.0 bun run start <科目>` 开 `http://<局域网IP>:<科目端口>/`。
-- 作答记录与得分存浏览器 localStorage（键 = subject.json `storageKey`，派生键 `.shuffle` `.syncsnap` `.synccleared` `.expl` `.hist`），刷新不丢；「清空记录」三道闸门（确认 → 输入 6 位随机码 → 最终确认），连历史留档一并清除并同步云端。
-- **作答进度云同步**：经同源 `api/store`（`sync.js`）自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」全局压制；顶栏「☁️ 已同步 / 未联网」提示。本机与线上读写同一云端（`STORE_API` 默认线上；置 `off` 可禁用）。线上为公开无鉴权、**每科目一个全局槽位**（同科目访问者共用进度，个人自用场景，勿存敏感数据）；file:// 打开自动跳过云同步。
+- 作答记录与得分存浏览器 localStorage（键基座 = subject.json `storageKey` + 同步码分区后缀，派生键 `.shuffle` `.syncsnap` `.synccleared` `.expl` `.hist`；未签发同步码的旧版设备仍用裸键），刷新不丢；「清空记录」三道闸门（确认 → 输入 6 位随机码 → 最终确认），连历史留档一并清除并同步云端（只清本人槽位）。
+- **作答进度云同步（多用户）**：经同源 `api/store[/<同步码>]`（`sync.js`）自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」在本人槽位内全局压制；顶栏「☁️ 已同步 / 未联网」提示，**点芯片管理同步码**。云端槽位 =（科目, 同步码）由 Go 服务 `grade-svc/cmd/syncsvc` 落 SQLite：新访客浏览器静默签发 6 位私有码（各人进度互不干扰、互不可猜）；换手机/电脑输入同一个码即续用（全部科目共用一码）；同设备输不同码即切换用户。**不输码的设备继续读写旧版全局槽**（`user=''`，站长存量进度无缝续用），旧版有数据的设备可在芯片弹层「把这台的进度换成同步码」一键迁移。本机与线上读写同一云端（`STORE_API` 默认线上；置 `off` 可禁用）。接口仍公开无鉴权，勿存敏感数据；file:// 打开自动跳过云同步。
 - **考点思维导图**：各科目顶栏入口进 `mindmap.html`（按章分屏渐进披露、SVG 图形视图 + 列表视图、押题联动标注、搜索按章、状态存本机），文字版为科目根的导图 md。
 
 ### 判分说明
@@ -99,12 +99,12 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 - 科目 `data/build_data.js` 只负责「把自己的源 docx 版式解析成规范题目数组」；装配段（unordered 并列互换标记、简答精简考点 `essay_points.json` 覆盖与 `**关键词**` 剥标、主观题解析 `explanations.json` 合并、变体生成、产物落盘、meta 注入）全走共享层 `scripts/build-lib.js`，勿在科目里重复实现。
 - 撰写新题解析必须逐题参考该科目串讲/考点资料并标注考点；简答得分点用大模型逐题精简（只留拿分关键词），措辞须保持参考答案词序，否则「原文作答≈满分」锚点（逐科目测试 ≥95）会掉分。
-- 判分口径升级时（如填空重算迁移）跑全量 `bun test`；合并逻辑改动会被 `test/merge_xcheck.test.js`（前端 sync.js ↔ 门户 store.js 等价交叉校验）拦截——这是「同步」的唯一守卫，不再有「三处同改」。
+- 判分口径升级时（如填空重算迁移）跑全量 `bun test`；合并/校验逻辑改动会被 `test/fixtures/merge_golden.json` 单一夹具拦截——前端 sync.js（`test/merge_xcheck.test.js`）与 Go syncsvc（`grade-svc/store_golden_test.go`）跨语言两份实现各自断言同一夹具，改口径须两实现同改后重跑 `scripts/gen-merge-golden.js` 刷新，单侧漂移必红；不再有「三处同改」口头约定。
 
 ## 线上部署与发布
 
-- `./deploy.sh`：探测免密 SSH（6000/22）→ 遍历 `subjects/` → `bun run build` + `bun run stage` → 本机交叉构建 linux/amd64 镜像（`exam-portal` + 每科目 `exam-grade-<prefix>`）→ `docker save` 管道上传 → 服务器 `docker load` + 生成的 compose 起（门户绑 127.0.0.1:8799，判分服务不映射端口）→ nginx 按 Host=IP 逐科目前缀 location 循环生成（读写超时 120s）→ 逐科目 curl 探活。幂等可重复；compose 为 `scripts/gen-compose.js --remote` 生成物（勿手改）。
-- 云同步 SQLite 用命名卷 `portal-store`（服务器 docker 为 snap 版，bind mount 必失败）。
+- `./deploy.sh`：探测免密 SSH（6000/22）→ 遍历 `subjects/` → `bun run build` + `bun run stage` → 本机交叉构建 linux/amd64 镜像（`exam-portal` + `exam-sync` + 每科目 `exam-grade-<prefix>`）→ `docker save` 管道上传 → 服务器 `docker load` + 生成的 compose 起（门户绑 127.0.0.1:8799，云同步与判分服务不映射端口）→ nginx 按 Host=IP 逐科目前缀 location 循环生成（读写超时 120s）→ 逐科目 curl 探活（含 `/api/store` 云同步链路与非法码 400）。幂等可重复；compose 为 `scripts/gen-compose.js --remote` 生成物（勿手改）。
+- 云同步 SQLite 用命名卷 `portal-store`，现由 Go sync-svc 容器挂载（卷沿用旧名——线上旧版 sync.db 原地复用，sync-svc 启动自动把单槽表迁移为 (科目,用户) 复合主键并回填 `user=''`；服务器 docker 为 snap 版，bind mount 必失败）。
 - 本机全栈 docker 联调：`bun run build && bun run stage && bun scripts/gen-compose.js --build > docker-compose.local.yml && docker compose -f docker-compose.local.yml up -d --build`。
 - **每次本地更新提交后必须跑 `./deploy.sh`** 并 curl 验证线上已生效。
 
@@ -120,4 +120,4 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 ## 兼容与历史
 
-- 线上前缀 `/os/` `/net/`、localStorage 键、云端 store 科目主键与旧三仓（`~/自考操作系统` `~/自考网络安全` `~/自考押题门户`）完全一致——**已存作答进度无缝续用**。旧三仓自本仓启用后仅作存档，不再改动；网络安全站合入共享引擎后自动获得组卷跟随筛选、历史归档、单选解析内联等此前仅操作系统站有的能力。
+- 线上前缀 `/os/` `/net/`、localStorage 键、云端 store 科目主键与旧三仓（`~/自考操作系统` `~/自考网络安全` `~/自考押题门户`）完全一致——**已存作答进度无缝续用**。多用户改造（同步码）不破坏这条基线：不设置同步码的设备照旧读写 `user=''` 全局槽（与旧主键一一对应，旧库由 sync-svc 启动时自动迁移），码槽是纯增量。旧三仓自本仓启用后仅作存档，不再改动；网络安全站合入共享引擎后自动获得组卷跟随筛选、历史归档、单选解析内联等此前仅操作系统站有的能力。

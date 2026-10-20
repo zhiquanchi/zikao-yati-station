@@ -3,13 +3,16 @@
 (async function () {
   "use strict";
   const D = window.QUIZ_DATA, G = window.GRADER;
-  const KEY = D.meta.storageKey; // 存储键随科目走：localStorage 与云同步槽位口径不变
+  const ID = window.IDENTITY;
+  const isHttp = typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:");
+  ID.ensure(D.meta.storageKey, isHttp); // 新访客静默签发同步码；有旧版数据的设备继续兼容槽（站长零打断）
+  const KEY = ID.keyFor(D.meta.storageKey); // 存储键＝科目裸键+同步码分区；云端槽=(科目,码)，各人进度独立
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const TYPE_CN = { single: "单选", blank: "填空", essay: "简答" };
 
   // 云同步首拉合并：await 之后才装载 store/shuf（file:// 或超时自动降级纯本机，绝不阻塞渲染）
-  if (window.SYNC) await window.SYNC.prefetch(KEY);
+  if (window.SYNC) await window.SYNC.prefetch(KEY, ID.user());
 
   let store = load();
   let filters = { chapter: "all", type: "all", status: "all", search: "" };
@@ -872,6 +875,46 @@
   $("#shuffleBox").checked = shuffle;
   $("#shuffleAgain").style.display = shuffle ? "" : "none";
   bindToolbar();
+  // ——— 多用户身份：点顶栏云同步芯片开弹层（看码/复制/输码切换/一键迁移）———
+  (function identityUI() {
+    const chip = $("#syncChip"), dlg = $("#idDialog");
+    if (!chip || !dlg || !isHttp) return; // file:// 无云同步亦无芯片文案：身份功能不启用
+    const q = (s) => dlg.querySelector(s);
+    const raw = D.meta.storageKey;
+    const hasLegacyLocal = () => { try { return localStorage.getItem(raw) != null; } catch (e) { return false; } };
+    function render() {
+      const u = ID.user(), legacy = hasLegacyLocal();
+      q("#idDesc").innerHTML = u
+        ? "本机按同步码分槽上云，各人进度互不干扰；全部科目共用这一个码。"
+        : "本机还在用旧版全局槽——" + (legacy ? "同科目旧版设备<b>共用同一份进度</b>，建议换成你自己的同步码。" : "尚无本机的私有进度。");
+      const codeRow = q("#idCodeRow");
+      codeRow.hidden = !u;
+      if (u) codeRow.innerHTML = "我的同步码 <b>" + u + "</b>";
+      q("#idMigrate").hidden = !!u || !legacy;
+      q("#idCopy").hidden = !u;
+      q("#idBack").hidden = !ID.wasLegacy(); // 迁移过来的身份可退回旧版槽（新访客无此路）
+      q("#idInput").value = "";
+    }
+    async function switchTo(code, migrate) {
+      code = String(code || "").trim().toLowerCase();
+      if (!migrate && !ID.valid(code)) { toast("同步码应为 4~10 位小写字母数字（不含 i、l、o、0、1）"); return; }
+      if (window.SYNC) await SYNC.flushNow(); // 最后一笔防抖改动推完再换身份
+      if (migrate) ID.migrateTo(raw, code); else ID.setCode(code);
+      location.reload();
+    }
+    chip.classList.add("id-clickable");
+    chip.title = "云同步身份（多用户）";
+    chip.addEventListener("click", () => { render(); dlg.showModal(); });
+    q("#idClose").addEventListener("click", () => dlg.close());
+    q("#idMigrate").addEventListener("click", () => switchTo(ID.mint(), true));
+    q("#idApply").addEventListener("click", () => switchTo(q("#idInput").value, false));
+    q("#idBack").addEventListener("click", async () => { if (window.SYNC) await SYNC.flushNow(); ID.clearCode(); location.reload(); });
+    q("#idCopy").addEventListener("click", () => {
+      const c = ID.user(); if (!c) return;
+      const fb = () => toast("你的同步码：" + c);
+      try { navigator.clipboard.writeText(c).then(() => toast("同步码已复制"), fb); } catch (e) { fb(); }
+    });
+  })();
   renderStats();
   renderChapters();
   renderList();

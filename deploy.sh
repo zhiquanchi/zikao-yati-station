@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 一键发布：按 subjects/ 科目清单自动完成——重建题库与门户清单 → 暂存各科目前端产物 →
-# 本机交叉构建 amd64 镜像（门户 + 每科目判分服务）→ docker save 管道上传 → 服务器 docker load + compose up → nginx 循环生成 → 探活。
+# 本机交叉构建 amd64 镜像（门户 + 云同步 sync-svc + 每科目判分服务）→ docker save 管道上传 → 服务器 docker load + compose up → nginx 循环生成 → 探活。
 # 新增科目零改本脚本：进 subjects/ 后重新发布即自动纳入（前缀 location、判分服务、编排、门户切换器全循环生成）。
 # 服务器无需源码；可重复执行（幂等）。用法：./deploy.sh
 set -euo pipefail
@@ -42,10 +42,11 @@ fi
 bun run build
 bun run stage
 
-# —— 4. 本机交叉构建 linux/amd64 镜像（门户 1 个 + 每科目判分 1 个，均取仓库根为上下文）——
-echo "🔨 构建 exam-portal 与 exam-grade-<科目>（linux/amd64）…"
+# —— 4. 本机交叉构建 linux/amd64 镜像（门户 + 云同步各 1 个 + 每科目判分 1 个，均取仓库根为上下文）——
+echo "🔨 构建 exam-portal、exam-sync 与 exam-grade-<科目>（linux/amd64）…"
 docker build --platform linux/amd64 -t exam-portal:latest -f portal/Dockerfile .
-SAVE_IMAGES=(exam-portal:latest)
+docker build --platform linux/amd64 -t exam-sync:latest -f grade-svc/Dockerfile.sync .
+SAVE_IMAGES=(exam-portal:latest exam-sync:latest)
 for i in "${!SLUGS[@]}"; do
   docker build --platform linux/amd64 -f grade-svc/Dockerfile --build-arg SUBJECT="${SLUGS[$i]}" -t "exam-grade-${PREFIXES[$i]}:latest" .
   SAVE_IMAGES+=("exam-grade-${PREFIXES[$i]}:latest")
@@ -95,9 +96,16 @@ else
   echo "ℹ 服务器无 nginx：改直挂 80 需先释放端口（当前编排绑 127.0.0.1:8799）"
 fi
 
-# —— 8. 探活：逐科目前缀 ——
+# —— 8. 探活：逐科目前缀（静态 + 云同步链路：旧版兼容槽可读、Go 端拒收非法码）——
 for pre in "${PREFIXES[@]}"; do
   curl -fsS -o /dev/null -w "本机外网探活 /$pre/ → HTTP %{http_code}\n" --max-time 15 "http://$IP/$pre/" || \
     echo "⚠ 本机访问 /$pre/ 失败：服务器上先自查 curl -H 'Host: $IP' http://127.0.0.1/$pre/ ；通则到阿里云控制台放行安全组 80"
+  SYNC_JSON=$(curl -fsS --max-time 15 "http://$IP/$pre/api/store" || true)
+  case "$SYNC_JSON" in
+    *'"blob"'*) echo "☁️ /$pre/api/store 云同步（sync-svc）OK" ;;
+    *) echo "❌ /$pre/api/store 云同步异常（查 sync-svc 容器与 portal 转发）"; exit 1 ;;
+  esac
+  BAD_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://$IP/$pre/api/store/ABCD")
+  [ "$BAD_CODE" = "400" ] || { echo "❌ /$pre 非法同步码应 400，实得 $BAD_CODE（Go 校验或转发链路不对）"; exit 1; }
 done
 echo "✅ 发布完成：http://$IP/${PREFIXES[0]}/ …（共 ${#PREFIXES[@]} 科）"

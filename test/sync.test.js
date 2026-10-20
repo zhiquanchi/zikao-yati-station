@@ -1,6 +1,7 @@
 // 云同步纯函数回归（bun test）：mergeBlobs 逐题 ts-LWW 与 clearedAt 压制、
-// payloadStore 墓碑生成/幂等重放/清空跳过、payloadShuf 卷与清空墓碑、applyInto 竞态保护。
-// 与门户 store.js 的合并口径一致性另由 test/merge_xcheck.test.js 交叉校验。
+// payloadStore 墓碑生成/幂等重放/清空跳过、payloadShuf 卷与清空墓碑、applyInto 竞态保护、
+// prefetch 多用户槽位 URL 构造。与 Go 云同步服务的合并口径一致性由 test/merge_xcheck.test.js ↔
+// grade-svc/store_golden_test.go 对同一夹具断言锁定。
 import { describe, it, expect } from "bun:test";
 import "../web/sync.js"; // UMD 收尾：浏览器挂 window、bun 挂 globalThis
 
@@ -85,5 +86,39 @@ describe("applyInto（合并结果写回内存引用，打字竞态安全）", (
     const target = { 4: { u: "drafting", s: null, ts: 500 } };
     S.applyInto(target, { 4: { u: "stale", s: null, ts: 400 } }, {});
     expect(target["4"].u).toBe("drafting");
+  });
+});
+
+describe("prefetch 多用户槽位 URL", () => {
+  it("带码 → api/store/<码>；无码（旧版兼容槽）→ api/store；GET 与防抖 PUT 同址", async () => {
+    const saved = { ls: globalThis.localStorage, loc: globalThis.location, fetch: globalThis.fetch };
+    const m = new Map();
+    globalThis.localStorage = {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: (k) => m.delete(k),
+    };
+    globalThis.location = { protocol: "http:" };
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ blob: { store: {}, shuf: null, clearedAt: 0, updatedAt: Date.now() } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    try {
+      await S.prefetch("k13180.v1.ab2cde", "ab2cde"); // 码用户：键与 URL 都带码（键由 identity.js 派生传入）
+      await S.flushNow(); // 立即推完防抖队列，不留挂起计时器
+      await S.prefetch("k13180.v1", ""); // 旧版兼容槽：裸键 + 无尾段 URL
+      await S.flushNow();
+      expect(urls).toEqual(["api/store/ab2cde", "api/store/ab2cde", "api/store", "api/store"]);
+      // 分区键自然隔离：码用户的快照写在带码后缀的键上，两身份快照互不覆盖
+      expect(m.has("k13180.v1.ab2cde.syncsnap")).toBe(true);
+      expect(m.has("k13180.v1.syncsnap")).toBe(true);
+    } finally {
+      if (saved.ls === undefined) delete globalThis.localStorage; else globalThis.localStorage = saved.ls;
+      if (saved.loc === undefined) delete globalThis.location; else globalThis.location = saved.loc;
+      globalThis.fetch = saved.fetch;
+    }
   });
 });

@@ -4,22 +4,22 @@
 
 ## 常用命令
 
-- `bun run start <科目>` — 本地静态服务器（默认 http://127.0.0.1:8791/ os、8793/ net，端口读 subject.json；`PORT=` 覆盖）；`/api/grade` `/api/store` 默认代理线上（本机不常驻服务，本机与线上同源互通）。双击 `build/stage/<prefix>/index.html` 本机直开（file:// 无 AI 判分、无云同步）
+- `bun run start <科目>` — 本地静态服务器（默认 http://127.0.0.1:8791/ os、8793/ net，端口读 subject.json；`PORT=` 覆盖）；`/api/grade` `/api/store[/<同步码>]` 默认代理线上（本机不常驻服务，本机与线上同码互通）。双击 `build/stage/<prefix>/index.html` 本机直开（file:// 无 AI 判分、无云同步）
 - `bun run build [科目…]` — 重新生成各科 data.js/questions.json + 刷新派生清单（web/subjects.js、portal/subjects.json）；`--manifest` 只刷清单
 - `bun run stage [科目…]` — 合成部署形态 `build/stage/<prefix>/`（web/ 引擎 + 科目产物）
 - `./start-ai.sh <科目>` — 本地 AI 判分联调（后台 Go + 前台站点，需 `export QWEN_API_KEY=sk-xxx`；自动 GRADE_API 指向本地）
-- `bun test` — 引擎回归 + 逐科目数据不变量 + sync↔store 交叉 + 代理/清单守卫（改判分/合并/部署逻辑后必跑）
-- `cd grade-svc && go test ./...` — Go 判分服务单测（httptest 假上游，零真实网络）
+- `bun test` — 引擎回归 + 逐科目数据不变量 + 云同步 golden/身份/槽位（store.test.js 构建并起 Go sync-svc，依赖 go 工具链）+ 代理/清单守卫（改判分/合并/部署逻辑后必跑）
+- `cd grade-svc && go test ./...` — Go 判分与云同步服务单测（httptest 假上游/临时 SQLite，零真实网络）
 - `bun run new-subject <prefix> <code> <中文名>` — 生成新科目骨架（端口自动分配）
 - `./deploy.sh` — 线上一键发布（**每次本地更新提交后必须跑**，遍历科目，幂等）
 
 ## 结构
 
-- 前端经典脚本按序加载（web/index.html）：`data.js`（window.QUIZ_DATA，科目产物）→ `grading.js`（window.GRADER）→ `sync.js`（window.SYNC）→ `subjects.js`（window.SUBJECTS，切换器清单，生成物）→ `app.js` → `subject-switch.js`。**科目身份全部来自 `QUIZ_DATA.meta`**（build 时由 subject.json 注入）：存储键、标题文案、题型分值/组卷目标、特性开关——新增「这科和那科不一样」的东西，加 subject.json 字段 + meta，不在引擎里写死。
+- 前端经典脚本按序加载（web/index.html）：`data.js`（window.QUIZ_DATA，科目产物）→ `grading.js`（window.GRADER）→ `sync.js`（window.SYNC）→ `identity.js`（window.IDENTITY，多用户同步码身份）→ `subjects.js`（window.SUBJECTS，切换器清单，生成物）→ `app.js` → `subject-switch.js`。**科目身份全部来自 `QUIZ_DATA.meta`**（build 时由 subject.json 注入）：存储键、标题文案、题型分值/组卷目标、特性开关——新增「这科和那科不一样」的东西，加 subject.json 字段 + meta，不在引擎里写死。
 - `subjects/<科目>/`：`subject.json`（身份唯一源：prefix/code/name/标题/storageKey/ports/flags/paper/mindmap/grade）、`data/`（raw.txt、**build_data.js＝该科 docx 专属解析器**、questions.json、可选 explanations/essay_points/unordered）、`data.js`（生成物，有意提交）、`mindmap.html`（导图页，数据内联）、科目根导图 md、`grade/reference.md`（可选：单选逐项解析参考资料，须与导图逐字一致）。`_template/` 为新科目骨架。
-- `scripts/`：`config.js`（loadSubjects/findSubject/metaOf——server/build/deploy/测试共用）、`build-lib.js`（装配共享层：fullRef/variantsOf/orderVariants/splitBlanks/applyUnordered/applyEssayPoints/applyExplains/writeArtifacts）、`build.js`、`stage.js`、`gen-compose.js`、`new-subject.js`。
-- `grade-svc/` 为独立 Go module：main.go 路由、grader.go prompt/上游/normalize/缓存、explain.go 单选逐项解析、subject.go 科目配置装载。
-- `portal/`：portal.js（科目清单读生成的 portal/subjects.json，前缀路由/判分上游/裸根重定向全循环）、store.js（bun:sqlite 云同步，科目无关，主键=前缀）。
+- `scripts/`：`config.js`（loadSubjects/findSubject/metaOf——server/build/deploy/测试共用）、`build-lib.js`（装配共享层：fullRef/variantsOf/orderVariants/splitBlanks/applyUnordered/applyEssayPoints/applyExplains/writeArtifacts）、`build.js`、`stage.js`、`gen-compose.js`、`new-subject.js`、`gen-merge-golden.js`（云同步跨语言夹具生成器）。
+- `grade-svc/` 为独立 Go module：main.go 路由、grader.go prompt/上游/normalize/缓存、explain.go 单选逐项解析、subject.go 科目配置装载；`cmd/syncsvc/` ＝云同步服务 sync-svc（store.go：合并/整形校验/(科目,用户) 槽位与旧单槽表迁移、纯 Go SQLite 驱动 modernc 以维持 CGO_ENABLED=0 交叉构建；`-normalize` stdio 模式供夹具生成器），`Dockerfile.sync` 独立出镜像。
+- `portal/`：portal.js（科目清单读生成的 portal/subjects.json，前缀路由/判分上游/裸根重定向全循环；api/store 与 api/grade 一样纯转发上游 SYNC_API，门户不执行业务逻辑）。
 
 ## 数据管线（勿手改生成物）
 
@@ -33,7 +33,7 @@
 - `grading.js` 纯函数、无 DOM、零网络，浏览器挂 `window.GRADER`、bun 测试经 import 副作用挂 `globalThis.GRADER`，保持 UMD IIFE 结构。
 - 文案与 UI 忌大段文字：解析结构化「考点标签→答案行→逐条短句（关键词加粗）→简答得分点编号列表」；按真实考卷分值思考（默认单选 1/填空 2/简答 5，组卷约 100 分——均在 subject.json `paper` 可配）。单选题无独立结果区与底部面板：判分结果内联选项区（正确项 `.opt.right`+「✓ 正确答案」、错选 `.opt.wrong`+「你的选择 ✗」、其余 `.dim`），解析面板 `.explain` 在 `.opts` 末尾；未判分开解析同样标 ✓；背答案同理；选项锁定判据＝卡上有 `.redo-btn`。填空/简答走「结果区+底部面板」。
 - 填空题答案**完全一致才给分**（仅容忍全半角/大小写/空格，fallback 整句兜底除外）。
-- 用户数据 localStorage，键=subject.json `storageKey`（派生键 `.shuffle` `.syncsnap` `.synccleared` `.hist` `.expl`）：改存储结构评估升版本；云同步只增删记录键不改单条形状。app.js 启动对已判分填空记录按当前引擎重算（只改 s/ts，不动形状）。`.expl`/`.hist` 本机专属不入云；历史归档 `.hist` 每题最近 10 次，界面不显示。「清空记录」三道闸门连 `.hist` 清除。
+- 用户数据 localStorage，键基座=subject.json `storageKey` + 同步码分区后缀（无码旧版设备保持裸键；派生键 `.shuffle` `.syncsnap` `.synccleared` `.hist` `.expl` 全部随分区派生）：改存储结构评估升版本；云同步只增删记录键不改单条形状。同步码在全局键 `quizsync.code`（identity.js 管理：静默签发/切换/迁移搬键）。app.js 启动对已判分填空记录按当前引擎重算（只改 s/ts，不动形状）。`.expl`/`.hist` 本机专属不入云；历史归档 `.hist` 每题最近 10 次，界面不显示。「清空记录」三道闸门连 `.hist` 清除（clearedAt 压制仅本人槽位）。
 - 随机组卷即全新：勾选或换一批都 `newShuffle`——先 `archiveHist` 再清卷内作答（保留 v 看过标记供加权），删除经墓碑同步云端；刷新不触发清理。组卷抽题池跟随当前筛选（`passFilters(q, true)`）；卷激活后状态筛选不再影响卷面，章节/题型/搜索卷内收窄；池空不组卷（勾选回退/换一批保留原卷）；卷面恢复只验 picked 题号。
 - AI 判分链路保持：`grade()` 纯同步，AI 只出现在 upgradeEssay 异步链；`svc_down/no_key/bad_key` 会话熔断 `aiOff`；restore 有 `g` 不再打网络。单选逐项解析按钮仅当 `meta.flags.explain` 为真时渲染。
 
@@ -44,16 +44,17 @@
 - 响应契约与 gradeEssay 兼容：`{engine,score,per:[{text,cov,state,comment,segs}]}`；explain 任务 `{task:"explain",source,items:[{key,correct,why,src}]}`，correct 一律按题面答案推导。两级链路（资料级 found=false 或失败→enable_search 联网级；网关拒参自动去参重出）。超时预算：Go 85s、代理 95s、线上 nginx 120s。
 - `subjects/<科目>/grade/reference.md` 更新后须与科目导图 md 逐字一致（`test/ref_sync.test.js` 值守卫）。
 
-## 云同步（sync.js ↔ portal/store.js）
+## 云同步（sync.js ↔ grade-svc/cmd/syncsvc · 多用户）
 
-- 合并语义：逐题 rec.ts LWW；本地删除发墓碑 `{u:null,s:null,ts}`；已同步墓碑按原 ts 幂等重放；「清空记录」clearedAt 全局压制（`.synccleared`）。
-- **两处实现、一处守卫**：`web/sync.js` mergeBlobs ↔ `portal/store.js` mergeBlobs/normalizeIncoming，由 `test/merge_xcheck.test.js` 随机夹具等价校验 + 载荷契约校验——改任一实现，同改另一处并跑测试。
-- 链路：同源相对 `api/store`；线上 portal.js 直连 store.js（bun:sqlite 每科目全局单槽，命名卷 portal-store）；本机 server.js 代理 STORE_API（默认线上对应前缀，置 `off` 禁用）。公开无鉴权，勿存敏感数据。
+- 身份=同步码：新访客浏览器静默签发 6 位码（identity.js，格式 `[a-z2-9]{4,10}` 与 Go 端 userRe 一致），云端槽位=(科目,码)、本机键按码分区；**不输码的设备继续读写 `user=''` 旧版全局槽**（站长存量无缝续用），同码跨设备续用（复用 LWW 合并），同设备换码＝切换用户；旧版有数据的设备提供一键「迁移」（6 键搬入码分区，非复制）。
+- 合并语义不变：逐题 rec.ts LWW；本地删除发墓碑 `{u:null,s:null,ts}`；已同步墓碑按原 ts 幂等重放；「清空记录」clearedAt 压制（`.synccleared`，仅本人槽）。
+- **两处实现（跨语言）、一处守卫**：`web/sync.js` mergeBlobs/payload* ↔ Go syncsvc mergeBlobs/normalizeIncoming，两侧分别断言单一夹具 `test/fixtures/merge_golden.json`（JS 侧 `test/merge_xcheck.test.js`、Go 侧 `grade-svc/cmd/syncsvc/store_golden_test.go`）——改口径两实现同改后重跑 `scripts/gen-merge-golden.js` 刷新夹具，单侧漂移必红。
+- 链路：同源相对 `api/store[/<码>]`；线上 portal.js 纯转发 sync-svc 容器（Go + modernc SQLite 纯 Go 驱动，命名卷 portal-store 由 sync-svc 挂载——旧卷名沿用，启动自动完成旧单槽表→复合主键迁移，失败拒启）；本机 server.js 代理 STORE_API（默认线上对应前缀并原样带码尾段，置 `off` 禁用）。公开无鉴权，勿存敏感数据。
 
 ## 部署（deploy.sh，每次本地提交后必跑）
 
-- 遍历 `subjects/*/subject.json` 全自动：build+stage → 交叉构建 amd64 镜像（portal + 每科目 grade）→ 管道上传 load → `gen-compose.js --remote` 生成的 compose rsync 起（门户绑 127.0.0.1:8799，科目服务不映射端口）→ nginx Host=IP 逐科目前缀 location（超时 120s 统一口径）→ 逐科目探活。**新增科目零改脚本**；compose/门户清单/nginx 均为生成物勿手改。发布后必须 curl 线上验证已生效。
-- 线上兼容基线：前缀 `/os/` `/net/`、各科 storageKey、云端主键与旧三仓一致，已存进度无缝续用，勿改。
+- 遍历 `subjects/*/subject.json` 全自动：build+stage → 交叉构建 amd64 镜像（portal + sync-svc 云同步 + 每科目 grade）→ 管道上传 load → `gen-compose.js --remote` 生成的 compose rsync 起（门户绑 127.0.0.1:8799，云同步与科目服务不映射宿主端口，命名卷 portal-store 由 sync-svc 挂载）→ nginx Host=IP 逐科目前缀 location（超时 120s 统一口径）→ 逐科目探活（含 `/api/store` 链路与非法码 400）。**新增科目零改脚本**；compose/门户清单/nginx 均为生成物勿手改。发布后必须 curl 线上验证已生效。
+- 线上兼容基线：前缀 `/os/` `/net/`、各科 storageKey（裸键=旧版无码设备路径）、云端 `user=''` 旧槽与旧三仓主键一致，已存进度无缝续用，勿改；多用户码槽是纯增量，旧库迁移由 sync-svc 启动时幂等完成。
 
 ## 其他约定
 

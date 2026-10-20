@@ -43,16 +43,17 @@ beforeAll(async () => {
       return Response.json({ ok: true });
     },
   });
-  // 假门户 store：GET 给固定槽位，PUT 原样回包（模拟服务端合并返回）
+  // 假门户 store：GET 给固定槽位，PUT 原样回包（模拟服务端合并返回）；附带 path 回显收到的请求路径（验证码尾段透传）
   fakeStore = Bun.serve({
     hostname: "127.0.0.1",
     port: FAKE_STORE,
     async fetch(req) {
-      if (req.method === "GET") return Response.json({ blob: { store: { 1: { u: "C", s: 100, ts: 11 } }, shuf: null, clearedAt: 0, updatedAt: 11 } });
+      const path = new URL(req.url).pathname;
+      if (req.method === "GET") return Response.json({ path, blob: { store: { 1: { u: "C", s: 100, ts: 11 } }, shuf: null, clearedAt: 0, updatedAt: 11 } });
       if (req.method === "PUT") {
         const b = await req.json().catch(() => null);
         if (!b || !b.store) return Response.json({ error: "bad_payload" }, { status: 400 });
-        return Response.json({ blob: { store: b.store, shuf: b.shuf, clearedAt: b.clearedAt, updatedAt: 22 } });
+        return Response.json({ path, blob: { store: b.store, shuf: b.shuf, clearedAt: b.clearedAt, updatedAt: 22 } });
       }
       return new Response("405", { status: 405 });
     },
@@ -144,6 +145,29 @@ describe("/api/store 云同步代理", () => {
       offProc.kill();
     }
   });
+  it("同步码尾段原样透传（/api/store/<码> → 上游同路径）", async () => {
+    const g = await fetch(`http://127.0.0.1:${PORT}/api/store/abcd23`);
+    expect(g.status).toBe(200);
+    expect((await g.json()).path).toBe("/api/store/abcd23");
+    const p = await fetch(`http://127.0.0.1:${PORT}/api/store/abcd23`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ store: { 6: { u: "y", ts: 8 } }, shuf: null, clearedAt: 0 }),
+    });
+    const pj = await p.json();
+    expect(pj.path).toBe("/api/store/abcd23");
+    expect(pj.blob.store["6"].u).toBe("y");
+  });
+  it("STORE_API=off 时带码请求同样 502（off 判定不受尾段影响）", async () => {
+    const offProc = spawnSite("os13180", PORT + 8, `http://127.0.0.1:${FAKE_PORT}/api/grade`, "off");
+    try {
+      await waitUp(`http://127.0.0.1:${PORT + 8}/index.html`);
+      const o = await fetch(`http://127.0.0.1:${PORT + 8}/api/store/abcd23`);
+      expect(o.status).toBe(502);
+      expect((await o.json()).error).toBe("svc_down");
+    } finally {
+      offProc.kill();
+    }
+  });
 });
 
 // ——— 科目参数化的静态解析：每个科目都能起站、都拿自己的题库、共享引擎兜底 ———
@@ -164,7 +188,7 @@ for (const s of loadSubjects()) {
       const djs = await (await fetch(`http://127.0.0.1:${port}/data.js`)).text();
       expect(djs).toContain(`"storageKey":"${s.storageKey}"`); // 科目目录产物优先
       expect(djs).toContain(`"prefix":"${s.prefix}"`);
-      for (const f of ["app.js", "grading.js", "sync.js", "subject-switch.js", "styles.css", "subjects.js"]) {
+      for (const f of ["app.js", "grading.js", "sync.js", "identity.js", "subject-switch.js", "styles.css", "subjects.js"]) {
         expect((await fetch(`http://127.0.0.1:${port}/${f}`)).status).toBe(200); // web/ 共享引擎兜底
       }
       if (s.mindmap && s.mindmap.enabled) {
