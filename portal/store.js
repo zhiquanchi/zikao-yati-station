@@ -1,6 +1,6 @@
 // 作答进度云同步存储（门户内部模块 · bun:sqlite，零第三方依赖）：
 // 每科目一行全局单槽（subject 主键），载荷为 {store, shuf, clearedAt, updatedAt}。
-// 合并规则与两科目前端 sync.js 的 mergeBlobs 逐字一致（改一处必须同步三处）：
+// 合并规则与前端 web/sync.js 的 mergeBlobs 逐字一致（单仓两处实现，由 test/merge_xcheck.test.js 交叉校验锁定）：
 //   store 按题目 id 逐条比较 rec.ts，新者胜；ts ≤ clearedAt（取双方较大）的记录两端剔除；
 //   shuf 按 shuf.ts 新者胜。服务端是收敛点：PUT 传入载荷与库中现值合并后落库并返回合并结果。
 import { Database } from "bun:sqlite";
