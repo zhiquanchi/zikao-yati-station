@@ -537,7 +537,8 @@
   }
 
   // ——— 单选逐项解析：同源 /api/grade 的 task:"explain"（stream:true 走 SSE 流式）——LLM 先依《考点串讲》
-  // 资料作答，资料不足自动带 enable_search 联网补充；逐选项 delta 实时渲染，done 整包整形后落缓存。
+  // 资料作答，资料不足自动带 enable_search 联网补充；思考过程（reason 事件，思考等级中等）实时展示、
+  // 生成中展开、完成即收起（可手动切换，思考内容不入缓存）；逐选项 delta 实时渲染，done 整包整形后落缓存。
   // 应答为普通 JSON（旧网关/错误体）时回落整包口径；结果按题缓存于 localStorage（派生键），
   // 随 v2 云同步上云（expl 段逐题 ts LWW，跨设备复用不重复烧 token） ———
   const EKEY = KEY + ".expl";
@@ -566,7 +567,7 @@
     if (!validExpl(data, q)) throw explErr("parse");
     return data;
   }
-  // readExplSSE：读 SSE 帧并分发 delta/reset 给 onEvent；done 整包 resolve、error 带 code reject。
+  // readExplSSE：读 SSE 帧并分发 reason/delta/reset 给 onEvent；done 整包 resolve、error 带 code reject。
   // 流断（网络断开/超时 abort 后余帧）未等到 done → 按 upstream 失败处理。
   function readExplSSE(body, onEvent) {
     return new Promise((resolve, reject) => {
@@ -600,22 +601,40 @@
       })().catch((e) => bad(e));
     });
   }
+  function thinkPanelHTML(think, live) {
+    return `<div class="oe-think${live ? "" : " collapsed"}">` +
+      `<button class="oe-think-head" type="button"><span>${live ? "🧠 思考中…" : "🧠 思考过程"}</span><span class="oe-caret">▾</span></button>` +
+      `<div class="oe-think-body">${live ? "" : esc(think)}</div></div>`;
+  }
   function renderOptExpl(body, data) {
     const chip = data.source === "material"
       ? '<span class="oe-src ref">📖 依据考点串讲资料</span>'
       : '<span class="oe-src search">🔍 联网搜索补充</span>';
     delete body.dataset.live;
-    body.innerHTML = `<div class="oe-head">逐项解析 ${chip}</div>` + data.items.map((it) =>
+    const think = body.__think || "";
+    body.innerHTML = `<div class="oe-head">逐项解析 ${chip}</div>` + (think ? thinkPanelHTML(think, false) : "") +
+      data.items.map((it) =>
       `<div class="oe-row ${it.correct ? "ok" : "no"}"><span class="oe-key">${esc(it.key)}</span>` +
       `<span class="oe-tag">${it.correct ? "✓ 正确项" : "✗ 错误项"}</span><span class="oe-why">${esc(it.why)}</span></div>`).join("");
     body.classList.add("show");
   }
-  // 流式渲染：delta 事件逐选项落行（行按到达序出现，done 整包整形后重排并标注对错）；
-  // reset ＝ 资料级输出被弃用转联网，清回生成头。dataset.live 同时驱动光标样式。
+  // 流式渲染：reason 事件流式展示思考过程（生成中保持展开，用户可点标题手动收起/展开；
+  // done 后整包重排默认收起）；delta 事件逐选项落行（行按到达序出现，done 整包整形后重排并标注对错）；
+  // reset ＝ 资料级输出被弃用转联网，清回生成头（思考面板一并清空重建）。dataset.live 同时驱动光标样式。
   function startExplLive(body) {
     body.dataset.live = "1";
+    body.__think = "";
     body.innerHTML = '<div class="oe-head">🤖 逐项解析生成中…</div>';
     body.classList.add("show");
+  }
+  function explLiveReason(body, text) {
+    if (!text) return;
+    if (!body.dataset.live) startExplLive(body);
+    if (!$(".oe-think", body)) body.insertAdjacentHTML("beforeend", thinkPanelHTML("", true));
+    body.__think += text;
+    const tb = $(".oe-think-body", body);
+    tb.textContent = body.__think;
+    if (!body.querySelector(".oe-think").classList.contains("collapsed")) tb.scrollTop = tb.scrollHeight;
   }
   function explLiveDelta(body, key, text) {
     if (!body.dataset.live) startExplLive(body);
@@ -637,6 +656,10 @@
       renderOptExpl(body, cached);
       btn.textContent = "🤖 重新逐项解析";
     }
+    body.addEventListener("click", (e) => { // 思考面板手动展开/收起（事件委托：面板随 innerHTML 重建）
+      const head = e.target.closest && e.target.closest(".oe-think-head");
+      if (head) head.parentNode.classList.toggle("collapsed");
+    });
     btn.addEventListener("click", async () => {
       if (btn.disabled) return;
       btn.disabled = true;
@@ -644,6 +667,7 @@
       try {
         const data = await requestExplain(q, (ev, p) => {
           if (ev === "delta") explLiveDelta(body, p.key, p.text);
+          else if (ev === "reason") explLiveReason(body, p.text);
           else if (ev === "reset") startExplLive(body);
         });
         saveExplCache(q.id, data);

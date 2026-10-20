@@ -80,7 +80,7 @@ func newMux(g *grader) *http.ServeMux {
 	return mux
 }
 
-// streamExplain 以 SSE 应答逐项解析：事件 delta/reset/done/error（见 explain_stream.go）。
+// streamExplain 以 SSE 应答逐项解析：事件 reason/delta/reset/done/error（见 explain_stream.go）。
 // X-Accel-Buffering: no 让线上 nginx 对本响应关缓冲（默认尊重该头，无需改 location 配置）。
 // 流头一旦发出状态即 200，此后错误只能走 error 事件；校验类错误（400）也统一以事件表达，
 // 前端对 text/event-stream 与非流式 JSON 两种应答同码解析。

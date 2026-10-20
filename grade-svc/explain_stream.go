@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -26,6 +27,19 @@ var explErrClient = errors.New("client gone")
 type explDelta struct {
 	Key  string `json:"key"`
 	Text string `json:"text"`
+}
+
+// explReason 是 reason 事件载荷：模型思考过程（reasoning_content）的一段增量文本。
+// 仅用于前端实时展示，不参与 done 整形（done 契约与非流式完全同形，思考不入 ExplainResp）。
+type explReason struct {
+	Text string `json:"text"`
+}
+
+// explTry 是一次流式上游调用的参数组合：被网关拒绝的参数逐个降级重试。
+type explTry struct {
+	jsonFmt bool // response_format: json_object
+	search  bool // enable_search
+	effort  bool // reasoning_effort: medium（思考等级中等；qwen 系思考默认偏长，降到中等既提速又留出流式余量）
 }
 
 // explScanner 是面向解析输出格式（{"found":…,"items":[{"key":"A","why":"…"},…]}）的增量 JSON 扫描器。
@@ -209,16 +223,31 @@ func (s *explScanner) flush() error {
 	return s.emit(s.itemKey, txt)
 }
 
-// streamExplOnce 单次流式上游调用：逐 chunk Feed 给扫描器，同时累积全量 content 供末尾整形。
+// deltaReason 从 chunk 的 delta 里取 reasoning_content（DashScope 非标字段，SDK 落入 ExtraFields
+// 时键名保留原始 JSON 名），解码失败或空串返回 ""。
+func deltaReason(d openai.ChatCompletionChunkChoiceDelta) string {
+	f, ok := d.JSON.ExtraFields["reasoning_content"]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal([]byte(f.Raw()), &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// streamExplOnce 单次流式上游调用：逐 chunk Feed 给扫描器，同时累积全量 content 供末尾整形；
+// 思考增量（reasoning_content）经 onReason 实时转发。
 // 参数被上游拒绝发生在建流前的 400，错误文案里带参数名，由 streamExplCall 去参重试。
-func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletionMessageParamUnion, timeout time.Duration, jsonFmt, search bool, sc *explScanner) (string, error) {
+func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletionMessageParamUnion, timeout time.Duration, try explTry, sc *explScanner, onReason func(string) error) (string, error) {
 	opts := []option.RequestOption{
 		option.WithAPIKey(g.apiKey),
 		option.WithBaseURL(g.baseURL),
 		option.WithMaxRetries(1),
 		option.WithRequestTimeout(timeout),
 	}
-	if search {
+	if try.search {
 		opts = append(opts, option.WithJSONSet("enable_search", true))
 	}
 	client := openai.NewClient(opts...)
@@ -227,10 +256,13 @@ func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletio
 		Model:       shared.ChatModel(g.model),
 		Temperature: openai.Float(0),
 	}
-	if jsonFmt {
+	if try.jsonFmt {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}
+	}
+	if try.effort {
+		params.ReasoningEffort = shared.ReasoningEffortMedium
 	}
 	stream := client.Chat.Completions.NewStreaming(ctx, params)
 	defer stream.Close()
@@ -239,6 +271,11 @@ func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletio
 		chunk := stream.Current()
 		if len(chunk.Choices) == 0 {
 			continue
+		}
+		if rt := deltaReason(chunk.Choices[0].Delta); rt != "" && onReason != nil {
+			if err := onReason(rt); err != nil {
+				return full.String(), err
+			}
 		}
 		d := chunk.Choices[0].Delta.Content
 		if d == "" {
@@ -255,39 +292,55 @@ func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletio
 	return full.String(), nil
 }
 
-// streamExplCall 带容错的流式调用：response_format / enable_search 被拒时去参重试
-// （与非流式 callExplain 同策略）；重试重建扫描器，且若旧段已推过增量则先发 reset。
+// streamExplCall 带容错的流式调用：response_format / enable_search / reasoning_effort 被拒时
+// 去参重试（与非流式 callExplain 同策略，被拒哪个降哪个）；重试重建扫描器，
+// 且若旧段已推过内容或思考增量则先发 reset（前端两类面板一起清）。
+// 返回的 bool＝本段是否推过任何可见增量（内容或思考），决定弃用时要不要清屏。
 func (g *grader) streamExplCall(ctx context.Context, msgs []openai.ChatCompletionMessageParamUnion, timeout time.Duration, search bool, emit func(string, any) error) (string, bool, error) {
 	newSc := func() *explScanner {
 		return &explScanner{emit: func(key, txt string) error {
 			return emit("delta", explDelta{Key: key, Text: txt})
 		}}
 	}
-	emitReset := func() error { return emit("reset", map[string]bool{"reset": true}) }
+	sawReason := false
+	onReason := func(txt string) error {
+		sawReason = true
+		return emit("reason", explReason{Text: txt})
+	}
+	try := explTry{jsonFmt: true, search: search, effort: true}
 	sc := newSc()
-	content, err := g.streamExplOnce(ctx, msgs, timeout, true, search, sc)
-	if err != nil && !errors.Is(err, explErrClient) && strings.Contains(err.Error(), "response_format") {
-		if sc.sawDelta {
-			if e := emitReset(); e != nil {
-				return content, sc.sawDelta, explErrClient
+	content, err := g.streamExplOnce(ctx, msgs, timeout, try, sc, onReason)
+	for err != nil && !errors.Is(err, explErrClient) {
+		es := err.Error()
+		dropped := false
+		switch {
+		case try.jsonFmt && strings.Contains(es, "response_format"):
+			try.jsonFmt = false
+			dropped = true
+		case try.search && strings.Contains(es, "enable_search"):
+			try.search = false
+			dropped = true
+		case try.effort && strings.Contains(es, "reasoning_effort"):
+			try.effort = false
+			dropped = true
+		}
+		if !dropped {
+			break
+		}
+		if sc.sawDelta || sawReason {
+			if e := emit("reset", map[string]bool{"reset": true}); e != nil {
+				return content, sc.sawDelta || sawReason, explErrClient
 			}
 		}
 		sc = newSc()
-		content, err = g.streamExplOnce(ctx, msgs, timeout, false, search, sc)
+		sawReason = false
+		content, err = g.streamExplOnce(ctx, msgs, timeout, try, sc, onReason)
 	}
-	if err != nil && !errors.Is(err, explErrClient) && search && strings.Contains(err.Error(), "enable_search") {
-		if sc.sawDelta {
-			if e := emitReset(); e != nil {
-				return content, sc.sawDelta, explErrClient
-			}
-		}
-		sc = newSc()
-		content, err = g.streamExplOnce(ctx, msgs, timeout, true, false, sc)
-	}
-	return content, sc.sawDelta, err
+	return content, sc.sawDelta || sawReason, err
 }
 
-// ExplainStream ＝ Explain 的流式版：事件序列 delta* [reset delta*] done；
+// ExplainStream ＝ Explain 的流式版：事件序列 reason*/delta* [reset reason*/delta*] done；
+// reason＝思考过程增量（思考等级中等，reasoning_effort=medium），仅供展示、不入 done；
 // 失败以 error 事件表达（payload 与 REST 错误体同形 {error, detail}）；请求体校验失败仍走
 // JSON 错误（发生在流头之前）。缓存语义不变：命中不产生 delta，调用方直接把 cached=true 的
 // ExplainResp 发成 done。

@@ -31,7 +31,8 @@ func splitRunes(s string, n int) []string {
 	return out
 }
 
-// fakeExplStream 假流式上游：第 i 次调用回放 stages[i]（字符串数组＝content 分块）；
+// fakeExplStream 假流式上游：第 i 次调用回放 stages[i]（字符串数组＝content 分块；
+// 元素以 "R:" 开头则回放为 reasoning_content 思考增量）；
 // 单元素且以 "!" 开头回 400（正文为其余文本）、"@401" 回 401，语义同 fakeExpl。
 func fakeExplStream(t *testing.T, stages [][]string, calls *[]explCall) *httptest.Server {
 	t.Helper()
@@ -60,6 +61,10 @@ func fakeExplStream(t *testing.T, stages [][]string, calls *[]explCall) *httptes
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintf(w, "data: %s\n\n", `{"choices":[{"index":0,"delta":{"content":""},"finish_reason":null}]}`)
 		for _, c := range st {
+			if rtxt := strings.TrimPrefix(c, "R:"); rtxt != c {
+				fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"reasoning_content\":%s},\"finish_reason\":null}]}\n\n", quote(rtxt))
+				continue
+			}
 			fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":%s},\"finish_reason\":null}]}\n\n", quote(c))
 		}
 		io.WriteString(w, "data: [DONE]\n\n")
@@ -68,19 +73,25 @@ func fakeExplStream(t *testing.T, stages [][]string, calls *[]explCall) *httptes
 
 // evLog 收集事件流供断言。
 type evLog struct {
-	deltas []explDelta
-	resets int
+	deltas  []explDelta
+	reasons []string
+	resets  int
 }
 
 func (l *evLog) emit(event string, data any) error {
 	switch event {
 	case "delta":
 		l.deltas = append(l.deltas, data.(explDelta))
+	case "reason":
+		l.reasons = append(l.reasons, data.(explReason).Text)
 	case "reset":
 		l.resets++
 	}
 	return nil
 }
+
+// joinedReason 拼接全部思考增量。
+func joinedReason(l *evLog) string { return strings.Join(l.reasons, "") }
 
 // ——— 扫描器纯单元 ———
 
@@ -180,7 +191,7 @@ func TestExplScannerGarbage(t *testing.T) {
 
 func TestExplainStreamMaterialFirst(t *testing.T) {
 	var calls []explCall
-	srv := fakeExplStream(t, [][]string{splitRunes(explFoundTrue, 5)}, &calls)
+	srv := fakeExplStream(t, [][]string{append([]string{"R:先想想并发性"}, splitRunes(explFoundTrue, 5)...)}, &calls)
 	defer srv.Close()
 	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	l := &evLog{}
@@ -191,11 +202,17 @@ func TestExplainStreamMaterialFirst(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("资料充分应只调 1 次，实际 %d", len(calls))
 	}
+	if calls[0].body["reasoning_effort"] != "medium" {
+		t.Errorf("思考等级应为中等（reasoning_effort=medium）：%v", calls[0].body["reasoning_effort"])
+	}
 	if res.Source != "material" || len(res.Items) != 4 || !res.Items[0].Correct {
 		t.Errorf("res=%+v", res)
 	}
 	if l.resets != 0 || len(l.deltas) == 0 {
 		t.Errorf("资料级成功不应 reset，且应有 delta：%+v", l)
+	}
+	if joinedReason(l) != "先想想并发性" {
+		t.Errorf("reason 增量不符：%q", joinedReason(l))
 	}
 	if joined(l, "A") != "并发是四大特征之一，宏观同时推进" {
 		t.Errorf("delta 文本不符：%+v", l.deltas)
@@ -203,8 +220,75 @@ func TestExplainStreamMaterialFirst(t *testing.T) {
 	// 缓存：第二次调用零 delta、直接命中（不走上游）
 	l2 := &evLog{}
 	res2, err := g.ExplainStream(context.Background(), sampleExplainReq(), l2.emit)
-	if err != nil || !res2.Cached || len(l2.deltas) != 0 || len(calls) != 1 {
+	if err != nil || !res2.Cached || len(l2.deltas) != 0 || len(l2.reasons) != 0 || len(calls) != 1 {
 		t.Errorf("应命中缓存且不流式：%+v %v calls=%d", res2, err, len(calls))
+	}
+}
+
+// 上游拒绝 reasoning_effort → 去参重试一次成功；被拒发生在建流前，不产生 reset。
+func TestExplainStreamEffortRejected(t *testing.T) {
+	var calls []explCall
+	srv := fakeExplStream(t, [][]string{
+		{"!Unsupported parameter: 'reasoning_effort' is not supported"},
+		splitRunes(explSearchItems, 4),
+	}, &calls)
+	defer srv.Close()
+	g := newGrader("sk-test", srv.URL, "", testSubject())
+	l := &evLog{}
+	res, err := g.ExplainStream(context.Background(), sampleExplainReq(), l.emit)
+	if err != nil || res.Source != "search" || len(calls) != 2 {
+		t.Fatalf("应去参重试成功：err=%v res=%+v calls=%d", err, res, len(calls))
+	}
+	if _, ok := calls[1].body["reasoning_effort"]; ok {
+		t.Errorf("去参重试不应再带 reasoning_effort")
+	}
+	if l.resets != 0 {
+		t.Errorf("建流前被拒不应发 reset：%+v", l)
+	}
+	if len(l.deltas) == 0 {
+		t.Errorf("重试成功后应正常流式：%+v", l)
+	}
+}
+
+// 思考增量出现在 content 之前也要转发；已推过思考（未推内容）时弃用本段输出需 reset 清屏。
+func TestExplainStreamReasonOnlyThenFallback(t *testing.T) {
+	var calls []explCall
+	srv := fakeExplStream(t, [][]string{
+		{"R:资料不够，得联网"},
+		append([]string{"R:搜到了"}, splitRunes(explSearchItems, 4)...),
+	}, &calls)
+	defer srv.Close()
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
+	var pre, post strings.Builder
+	resets := 0
+	res, err := g.ExplainStream(context.Background(), sampleExplainReq(), func(event string, data any) error {
+		if event == "reset" {
+			resets++
+			return nil
+		}
+		sb := &post
+		if resets == 0 {
+			sb = &pre
+		}
+		switch d := data.(type) {
+		case explDelta:
+			sb.WriteString(d.Text)
+		case explReason:
+			sb.WriteString(d.Text)
+		}
+		return nil
+	})
+	if err != nil || res.Source != "search" {
+		t.Fatalf("err=%v res=%+v", err, res)
+	}
+	if resets != 1 {
+		t.Fatalf("资料级只推过思考也应恰好 1 次 reset：%d", resets)
+	}
+	if pre.String() != "资料不够，得联网" {
+		t.Errorf("reset 前应只有资料级思考：%q", pre.String())
+	}
+	if !strings.Contains(post.String(), "搜到资料佐证") {
+		t.Errorf("reset 后应含联网级文案：%s", post.String())
 	}
 }
 
@@ -339,7 +423,7 @@ func parseSSE(t *testing.T, body string) map[string][]string {
 
 func TestHandlerExplainStream(t *testing.T) {
 	var calls []explCall
-	srv := fakeExplStream(t, [][]string{splitRunes(explFoundTrue, 6)}, &calls)
+	srv := fakeExplStream(t, [][]string{append([]string{"R:思考一下"}, splitRunes(explFoundTrue, 6)...)}, &calls)
 	defer srv.Close()
 	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	mux := newMux(g)
@@ -361,6 +445,9 @@ func TestHandlerExplainStream(t *testing.T) {
 	evs := parseSSE(t, rec.Body.String())
 	if len(evs["delta"]) == 0 {
 		t.Fatalf("应有 delta 事件：%s", rec.Body.String())
+	}
+	if len(evs["reason"]) != 1 || !strings.Contains(evs["reason"][0], "思考一下") {
+		t.Errorf("应有 reason 事件（思考增量转发）：%v", evs["reason"])
 	}
 	if len(evs["done"]) != 1 {
 		t.Fatalf("done 应恰好 1 条：%v", evs["done"])
