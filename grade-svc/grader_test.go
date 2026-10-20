@@ -14,6 +14,18 @@ import (
 	"testing"
 )
 
+// testSubject 是单测用科目身份（生产经 SUBJECT_DIR 注入，见 subject.go）：无参考资料。
+func testSubject() *subjectConfig {
+	return &subjectConfig{Prefix: "test", Code: "00000", Name: "操作系统", MaterialTitle: "操作系统考点串讲"}
+}
+
+// subjWithRef 带参考资料：单项选择逐项解析的第一级（资料级）测试用它。
+func subjWithRef() *subjectConfig {
+	s := testSubject()
+	s.reference = "《操作系统考点串讲》（测试资料）\n特征：并发、共享、虚拟、异步……"
+	return s
+}
+
 func sampleReq() GradeReq {
 	return GradeReq{
 		Stem:   "操作系统的特征有哪些？",
@@ -144,7 +156,7 @@ func TestGradeEndToEndAndCache(t *testing.T) {
 	content := `{"per":[{"i":1,"cov":1.0,"comment":"答到并发"},{"i":2,"cov":0.6,"comment":"沾边不完整"}]}`
 	srv := fakeOpenAI(t, content, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", testSubject())
 	res, err := g.Grade(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +183,7 @@ func TestGradeEndToEndAndCache(t *testing.T) {
 }
 
 func TestGradeRejectsBadInput(t *testing.T) {
-	g := newGrader("sk-test", "http://127.0.0.1:1", "") // 不应被调到
+	g := newGrader("sk-test", "http://127.0.0.1:1", "", testSubject()) // 不应被调到
 	empty := sampleReq()
 	empty.Answer = "  "
 	_, err := g.Grade(context.Background(), empty)
@@ -187,7 +199,7 @@ func TestUpstream401MapsBadKey(t *testing.T) {
 		io.WriteString(w, `{"error":{"message":"Invalid API key"}}`)
 	}))
 	defer srv.Close()
-	g := newGrader("sk-bad", srv.URL, "")
+	g := newGrader("sk-bad", srv.URL, "", testSubject())
 	_, err := g.Grade(context.Background(), sampleReq())
 	var se *svcErr
 	if err == nil || !asSvcErr(err, &se) || se.Code != "bad_key" {
@@ -217,7 +229,7 @@ func TestResponseFormatFallback(t *testing.T) {
 		fmt.Fprintf(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":%s}}]}`, quote(content))
 	}))
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", testSubject())
 	res, err := g.Grade(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +245,7 @@ func TestResponseFormatFallback(t *testing.T) {
 // —— HTTP 层 ——
 
 func TestHandlerNoKey501(t *testing.T) {
-	g := newGrader("", "http://127.0.0.1:1", "")
+	g := newGrader("", "http://127.0.0.1:1", "", testSubject())
 	mux := newMux(g)
 	req := httptest.NewRequest("POST", "/api/grade", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
@@ -252,7 +264,7 @@ func TestHandlerPassThrough(t *testing.T) {
 	content := `{"per":[{"i":1,"cov":1.0},{"i":2,"cov":1.0}]}`
 	srv := fakeOpenAI(t, content, nil)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", testSubject())
 	mux := newMux(g)
 	b, _ := json.Marshal(sampleReq())
 	rec := httptest.NewRecorder()

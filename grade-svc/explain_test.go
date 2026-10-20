@@ -2,15 +2,13 @@
 package main
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -86,7 +84,7 @@ func TestExplainMaterialFirst(t *testing.T) {
 	var calls []explCall
 	srv := fakeExpl(t, []string{explFoundTrue, explSearchItems}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	res, err := g.Explain(context.Background(), sampleExplainReq())
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +124,7 @@ func TestExplainFallsToSearch(t *testing.T) {
 	var calls []explCall
 	srv := fakeExpl(t, []string{explFoundFalse, explSearchItems}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	res, err := g.Explain(context.Background(), sampleExplainReq())
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +161,7 @@ func TestExplainStage1Garbage(t *testing.T) {
 	var calls []explCall
 	srv := fakeExpl(t, []string{"抱歉我讲不好", explSearchItems}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	res, err := g.Explain(context.Background(), sampleExplainReq())
 	if err != nil || res.Source != "search" || len(calls) != 2 {
 		t.Fatalf("第一级失败应降级联网：err=%v res=%+v calls=%d", err, res, len(calls))
@@ -175,7 +173,7 @@ func TestExplainSearchParamRejected(t *testing.T) {
 	var calls []explCall
 	srv := fakeExpl(t, []string{explFoundFalse, "!Unknown parameter: 'enable_search'.", explSearchItems}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	res, err := g.Explain(context.Background(), sampleExplainReq())
 	if err != nil || res.Source != "search" || len(calls) != 3 {
 		t.Fatalf("应去参重试成功：err=%v res=%+v calls=%d", err, res, len(calls))
@@ -188,17 +186,12 @@ func TestExplainSearchParamRejected(t *testing.T) {
 	}
 }
 
+// 科目无参考资料（subjectConfig.reference 为空）：跳过资料级，直接联网一级。
 func TestExplainNoReferenceSkipsStage1(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "ref.md")
-	if err := os.WriteFile(p, []byte("  \n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("REF_FILE", p)
 	var calls []explCall
 	srv := fakeExpl(t, []string{explSearchItems}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", testSubject())
 	res, err := g.Explain(context.Background(), sampleExplainReq())
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +245,7 @@ func TestExplainNormalize(t *testing.T) {
 }
 
 func TestExplainValidatesRequest(t *testing.T) {
-	g := newGrader("sk-test", "http://127.0.0.1:1", "")
+	g := newGrader("sk-test", "http://127.0.0.1:1", "", testSubject())
 	bad := sampleExplainReq()
 	bad.Answer = "Z" // 不在选项
 	var se *svcErr
@@ -267,25 +260,14 @@ func TestExplainValidatesRequest(t *testing.T) {
 }
 
 func TestExplainBadKeyMaps(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "ref.md")
-	os.WriteFile(p, []byte("  "), 0o644)
-	t.Setenv("REF_FILE", p)
 	var calls []explCall
 	srv := fakeExpl(t, []string{"@401"}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-bad", srv.URL, "")
+	g := newGrader("sk-bad", srv.URL, "", testSubject())
 	_, err := g.Explain(context.Background(), sampleExplainReq())
 	var se *svcErr
 	if err == nil || !asSvcErr(err, &se) || se.Code != "bad_key" {
 		t.Errorf("401 应映射 bad_key：%v", err)
-	}
-}
-
-// 参考资料副本已编译进二进制（deploy 前由 test/ref_sync.test.js 校验与仓库根一致）。
-func TestEmbeddedReferencePresent(t *testing.T) {
-	if len([]rune(embeddedReference)) < 1000 || !strings.Contains(embeddedReference, "操作系统") {
-		t.Errorf("reference.md 未正确嵌入，长度=%d", len(embeddedReference))
 	}
 }
 
@@ -294,7 +276,7 @@ func TestHandlerExplain(t *testing.T) {
 	var calls []explCall
 	srv := fakeExpl(t, []string{explFoundTrue}, &calls)
 	defer srv.Close()
-	g := newGrader("sk-test", srv.URL, "")
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
 	mux := newMux(g)
 	b, _ := json.Marshal(sampleExplainReq())
 	rec := httptest.NewRecorder()

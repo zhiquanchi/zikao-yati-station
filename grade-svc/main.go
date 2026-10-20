@@ -1,6 +1,7 @@
-// 13180 简答题 AI 判分服务（Go + OpenAI Go SDK · 千问兼容模式 · qwen3.8-flash）。
+// 自考简答 AI 判分服务（Go + OpenAI Go SDK · 千问兼容模式 · qwen3.8-flash），多科目共用同一份源码：
+// 科目身份与参考资料经 SUBJECT_DIR 注入（见 subject.go），每科目一个进程/容器，镜像由 grade-svc/Dockerfile 按 --build-arg SUBJECT 组装。
 // 默认只绑 127.0.0.1（GRADE_HOST 可改，供容器内使用）；密钥仅存在于本进程环境，前端经 server.js 的 /api/grade 同源代理访问。
-// 启动：export QWEN_API_KEY=sk-xxx && go run .（可选 QWEN_MODEL / QWEN_BASE_URL / GRADE_PORT / GRADE_HOST）
+// 本地启动：export QWEN_API_KEY=sk-xxx && ./start-ai.sh <科目>（可选 QWEN_MODEL / QWEN_BASE_URL / GRADE_PORT / GRADE_HOST）
 package main
 
 import (
@@ -36,7 +37,8 @@ func writeErr(w http.ResponseWriter, status int, code, detail string) {
 func newMux(g *grader) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"ok": true, "model": g.model, "has_key": g.apiKey != ""})
+		writeJSON(w, 200, map[string]any{"ok": true, "model": g.model, "has_key": g.apiKey != "",
+			"subject": g.subj.Name, "code": g.subj.Code, "has_material": g.subj.reference != ""})
 	})
 	mux.HandleFunc("POST /api/grade", func(w http.ResponseWriter, r *http.Request) {
 		if g.apiKey == "" {
@@ -74,10 +76,14 @@ func newMux(g *grader) *http.ServeMux {
 }
 
 func main() {
-	g := newGrader(os.Getenv("QWEN_API_KEY"), os.Getenv("QWEN_BASE_URL"), os.Getenv("QWEN_MODEL"))
+	subj, err := loadSubjectConfig(os.Getenv("SUBJECT_DIR"))
+	if err != nil {
+		log.Fatalf("科目配置加载失败：%v", err)
+	}
+	g := newGrader(os.Getenv("QWEN_API_KEY"), os.Getenv("QWEN_BASE_URL"), os.Getenv("QWEN_MODEL"), subj)
 	port := os.Getenv("GRADE_PORT")
 	if port == "" {
-		port = "8792"
+		port = "8792" // 容器内统一 8792（compose 不映射宿主端口）；本机各科目端口由 start-ai.sh 按 subject.json 传入
 	}
 	host := os.Getenv("GRADE_HOST")
 	if host == "" {
@@ -85,6 +91,7 @@ func main() {
 	}
 	addr := host + ":" + port
 	srv := &http.Server{Addr: addr, Handler: newMux(g), ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("🤖 13180 简答 AI 判分服务已启动 http://%s/api/grade（model=%s, key=%v）", addr, g.model, g.apiKey != "")
+	log.Printf("🤖 %s（%s）简答 AI 判分服务已启动 http://%s/api/grade（model=%s, key=%v, 参考资料=%d 字）",
+		subj.Name, subj.Code, addr, g.model, g.apiKey != "", len([]rune(subj.reference)))
 	log.Fatal(srv.ListenAndServe())
 }

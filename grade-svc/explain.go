@@ -1,4 +1,4 @@
-// 单选题「逐项解析」：LLM 先在《考点串讲》参考资料（go:embed 的 reference.md，与仓库根思维导图逐字一致）
+// 单选题「逐项解析」：LLM 先在科目参考资料（SUBJECT_DIR 注入的 grade/reference.md，与科目思维导图逐字一致）
 // 中寻找各选项对错的依据；资料覆盖不足时，第二次调用带 enable_search 让模型联网搜索补充解释。
 // 复用 POST /api/grade 路由（请求体 task:"explain" 分流），线上代理无需新增路径。
 // 缓存与判分同套路：进程内 map，同题只调一次上游。
@@ -7,11 +7,9 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -19,9 +17,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
 )
-
-//go:embed reference.md
-var embeddedReference string
 
 const (
 	explStage1Timeout = 30 * time.Second
@@ -51,14 +46,12 @@ type ExplainResp struct {
 	Cached bool          `json:"cached"`
 }
 
-// reference 优先读 REF_FILE（本地调试可指向仓库根导图），否则用编译进二进制的副本。
-func (g *grader) reference() string {
-	if p := os.Getenv("REF_FILE"); p != "" {
-		if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
-			return string(b)
-		}
+// materialTitle 是资料级 prompt 里的参考资料名：subject.json 的 grade.materialTitle 缺省时用通用措辞。
+func (s *subjectConfig) materialTitle() string {
+	if strings.TrimSpace(s.MaterialTitle) != "" {
+		return s.MaterialTitle
 	}
-	return embeddedReference
+	return s.Name + "考点参考资料"
 }
 
 func (r *GradeReq) validateExplain() error {
@@ -85,18 +78,22 @@ func (r *GradeReq) validateExplain() error {
 	return nil
 }
 
-const explSystemRef = `你是自学考试《操作系统》（13180）科目的主讲教师。下面提供《操作系统考点串讲》参考资料。
+func (g *grader) explSystemRef() string {
+	return fmt.Sprintf(`你是自学考试《%[1]s》（%[2]s）科目的主讲教师。下面提供《%[3]s》参考资料。
 给定一道单选题，为每个选项各写一条解释（每条不超过 40 字），讲清该选项为什么正确或为什么错误，句首点出关键概念，不要用 markdown 标记。
 解释必须能在参考资料中找到依据：资料足以支撑全部选项时 found 为 true；任何一个选项在资料中找不到依据时 found 为 false。
 只输出一个 JSON 对象，不要输出其它任何文字，格式：
 {"found": true, "items": [{"key": "A", "why": "…"}, {"key": "B", "why": "…"}]}
-items 必须恰好包含每个选项一次，key 与题目选项一致、不重不漏。`
+items 必须恰好包含每个选项一次，key 与题目选项一致、不重不漏。`, g.subj.Name, g.subj.Code, g.subj.materialTitle())
+}
 
-const explSystemSearch = `你是自学考试《操作系统》（13180）科目的主讲教师。
+func (g *grader) explSystemSearch() string {
+	return fmt.Sprintf(`你是自学考试《%[1]s》（%[2]s）科目的主讲教师。
 给定一道单选题，请依据联网搜索到的资料（无搜索结果时凭学科知识），为每个选项各写一条解释（每条不超过 40 字），讲清该选项为什么正确或为什么错误，句首点出关键概念，不要用 markdown 标记。
 只输出一个 JSON 对象，不要输出其它任何文字，格式：
 {"items": [{"key": "A", "why": "…"}, {"key": "B", "why": "…"}]}
-items 必须恰好包含每个选项一次，key 与题目选项一致、不重不漏。`
+items 必须恰好包含每个选项一次，key 与题目选项一致、不重不漏。`, g.subj.Name, g.subj.Code)
+}
 
 func buildExplainUser(r *GradeReq, ref string) string {
 	var sb strings.Builder
@@ -235,7 +232,7 @@ func explainCacheKey(r GradeReq) string {
 // Explain 两级链路：
 //  1. 带参考资料调用：模型判 found——资料足以解释全部选项则直接采用（source=material）；
 //  2. found=false 或第一级任何失败 → 带 enable_search 重新生成全选项解释（source=search）。
-// 无参考资料（REF_FILE 指向空文件且 embed 失败等）则直接走第二级。
+// 科目无参考资料（SUBJECT_DIR 下无 reference.md）则直接走第二级。
 func (g *grader) Explain(ctx context.Context, r GradeReq) (*ExplainResp, error) {
 	if err := r.validateExplain(); err != nil {
 		return nil, &svcErr{400, "bad_request", err.Error()}
@@ -249,15 +246,12 @@ func (g *grader) Explain(ctx context.Context, r GradeReq) (*ExplainResp, error) 
 	}
 	g.mu.Unlock()
 
-	var ref string
-	if s := g.reference(); strings.TrimSpace(s) != "" {
-		ref = s
-	}
+	ref := strings.TrimSpace(g.subj.reference)
 	resp := &ExplainResp{Engine: "ai", Task: "explain"}
 
 	if ref != "" {
 		msgs := []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(explSystemRef),
+			openai.SystemMessage(g.explSystemRef()),
 			openai.UserMessage(buildExplainUser(&r, ref)),
 		}
 		content, err := g.callExplain(ctx, msgs, explStage1Timeout, false)
@@ -275,7 +269,7 @@ func (g *grader) Explain(ctx context.Context, r GradeReq) (*ExplainResp, error) 
 
 	if resp.Source == "" {
 		msgs := []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(explSystemSearch),
+			openai.SystemMessage(g.explSystemSearch()),
 			openai.UserMessage(buildExplainUser(&r, "")),
 		}
 		content, err := g.callExplain(ctx, msgs, explStage2Timeout, true)

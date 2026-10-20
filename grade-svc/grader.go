@@ -66,19 +66,23 @@ type grader struct {
 	apiKey  string
 	baseURL string
 	model   string
+	subj    *subjectConfig // 科目身份（prompt 措辞与逐项解析资料来源，见 subject.go）
 	mu      sync.Mutex
 	cache   map[string]GradeResp
 	exCache map[string]ExplainResp // 单选逐项解析缓存（与 cache 同锁）
 }
 
-func newGrader(apiKey, baseURL, model string) *grader {
+func newGrader(apiKey, baseURL, model string, subj *subjectConfig) *grader {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
 	if model == "" {
 		model = defaultModel
 	}
-	return &grader{apiKey: apiKey, baseURL: baseURL, model: model,
+	if subj == nil {
+		subj = &subjectConfig{Name: "该"} // 兜底不应发生：main 未拿到科目配置会拒启
+	}
+	return &grader{apiKey: apiKey, baseURL: baseURL, model: model, subj: subj,
 		cache: map[string]GradeResp{}, exCache: map[string]ExplainResp{}}
 }
 
@@ -98,15 +102,17 @@ func (r GradeReq) validate() error {
 	return nil
 }
 
-const systemPromptFmt = `你是自考《操作系统》科目的阅卷老师。请对照参考答案要点，逐条评估学生作答的覆盖程度。
+func (g *grader) systemPrompt(n int) string {
+	return fmt.Sprintf(`你是自考《%[1]s》科目的阅卷老师。请对照参考答案要点，逐条评估学生作答的覆盖程度。
 评分口径：
 - cov 为该要点的覆盖度，0~1 的小数：语义一致即高分（0.8~1，允许措辞与顺序不同）；意思沾边但不完整给 0.3~0.7；只写到要点标题词而无实质解释约 0.5~0.6；完全没答到或答错给 0~0.2。
 - comment 不超过 25 字，指出答到了什么、缺了什么。
 只输出一个 JSON 对象，不要输出其它任何文字，格式：
 {"per":[{"i":1,"cov":0.8,"comment":"答到并发含义"},{"i":2,"cov":0.4,"comment":"只提标题未解释"}]}
-per 数组必须恰好包含 %[1]d 条，i 从 1 开始与要点编号对应。`
+per 数组必须恰好包含 %[2]d 条，i 从 1 开始与要点编号对应。`, g.subj.Name, n)
+}
 
-func buildMessages(r GradeReq) []openai.ChatCompletionMessageParamUnion {
+func (g *grader) buildMessages(r GradeReq) []openai.ChatCompletionMessageParamUnion {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "【题干】%s\n\n【参考答案要点】（共 %d 条）\n", r.Stem, len(r.Points))
 	for i, p := range r.Points {
@@ -114,7 +120,7 @@ func buildMessages(r GradeReq) []openai.ChatCompletionMessageParamUnion {
 	}
 	fmt.Fprintf(&sb, "\n【参考答案全文】%s\n\n【学生作答】\n%s\n", r.Ref, r.Answer)
 	return []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(fmt.Sprintf(systemPromptFmt, len(r.Points))),
+		openai.SystemMessage(g.systemPrompt(len(r.Points))),
 		openai.UserMessage(sb.String()),
 	}
 }
@@ -273,7 +279,7 @@ func (g *grader) Grade(ctx context.Context, r GradeReq) (*GradeResp, error) {
 	}
 	g.mu.Unlock()
 
-	content, err := g.call(ctx, buildMessages(r))
+	content, err := g.call(ctx, g.buildMessages(r))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, &svcErr{504, "timeout", "上游判分超时"}
