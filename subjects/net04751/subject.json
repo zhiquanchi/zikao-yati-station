@@ -1,0 +1,15 @@
+{
+  "prefix": "net",
+  "code": "04751",
+  "name": "计算机网络安全",
+  "examMonth": "2026年10月",
+  "title": "04751 计算机网络安全 · 押题练习",
+  "pageTitle": "2026年10月自考 04751 计算机网络安全 · 押题练习",
+  "switchLabel": "网络安全 04751",
+  "storageKey": "netsec04751.v1",
+  "ports": { "web": 8793, "grade": 8794 },
+  "flags": { "explain": false },
+  "paper": { "target": 100, "scores": { "single": 1, "blank": 2, "essay": 5 } },
+  "mindmap": { "enabled": true, "file": "计算机网络安全考点-思维导图.md", "label": "🗺 考点思维导图（8 章全览）" },
+  "grade": { "materialTitle": "计算机网络安全考点" }
+}

@@ -1,0 +1,9 @@
+.git
+.zcode
+.zcode/
+node_modules
+*.log
+.env
+build/
+grade-svc/grade-svc
+portal/test

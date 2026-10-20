@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>2026年10月自考 13180 操作系统 · 押题练习</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <h1>13180 操作系统 · 押题练习</h1>
+    <p class="sub">2026 年 10 月自考 · 共 <span id="total"></span> 题 · 填空/简答自动判分，作答记录自动云同步（本机与线上互通）<span id="syncChip" class="sync-chip"></span></p>
+    <a class="mm-entry" href="mindmap.html">🗺 考点思维导图（串讲 8 章全览）</a>
+    <div class="stats" id="stats"></div>
+  </div>
+</header>
+
+<nav class="toolbar wrap">
+  <button id="filterToggle" class="chip filter-toggle" aria-expanded="false" aria-controls="filterPanel">☰ 筛选设置</button>
+  <div class="filter-panel" id="filterPanel">
+    <select id="chapterSel" aria-label="选择章节"></select>
+    <div class="chips" id="typeChips">
+      <button class="chip active" data-type="all">全部题型</button>
+      <button class="chip" data-type="single">单选</button>
+      <button class="chip" data-type="blank">填空</button>
+      <button class="chip" data-type="essay">简答</button>
+    </div>
+    <div class="chips" id="statusChips">
+      <button class="chip active" data-status="all">全部</button>
+      <button class="chip" data-status="todo">未作答</button>
+      <button class="chip" data-status="low">待提高 &lt;60</button>
+      <button class="chip" data-status="master">已掌握 ≥80</button>
+    </div>
+    <input id="searchBox" type="search" placeholder="搜索题干关键词…">
+    <div class="tool-row">
+      <label class="switch"><input type="checkbox" id="shuffleBox">随机组卷（约100分）</label>
+      <button id="shuffleAgain" class="chip" style="display:none" title="按题型（简答>填空>单选）与掌握情况（未做/答错更易出现）加权，重新组一张约100分的卷子">🎲 换一批</button>
+      <label class="switch"><input type="checkbox" id="refBox">背答案</label>
+      <button id="resetBtn" class="ghost">清空记录</button>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap"><div id="paperInfo" style="display:none"></div></div>
+
+<main class="wrap" id="list"></main>
+
+<div id="bulkBar" style="display:none">
+  <span id="bulkCount"></span>
+  <button id="bulkSubmit">批量提交评分</button>
+</div>
+
+<footer class="foot wrap">判分为关键词/要点覆盖度的本机自动评估，仅供背诵自测，实际阅卷以考试标准为准。</footer>
+
+<script src="data.js"></script>
+<script src="grading.js"></script>
+<script src="sync.js"></script>
+<script src="app.js"></script>
+<script src="subject-switch.js"></script>
+</body>
+</html>

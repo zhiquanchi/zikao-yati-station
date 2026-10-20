@@ -1,0 +1,1454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>计算机网络安全考点 · 思维导图 · 04751</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+/* —— 思维导图页专属样式，基础色板与控件沿用主站 styles.css —— */
+.topbar .back {
+  display: inline-flex; align-items: center; gap: 5px; color: #fff; text-decoration: none;
+  background: rgba(255,255,255,.16); border-radius: 999px; padding: 4px 14px; font-size: 13px; margin-bottom: 10px;
+}
+.topbar .back:hover { background: rgba(255,255,255,.28); }
+.mm-toolbar { top: 10px; }
+.mm-toolbar .mm-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+
+/* —— 视图切换 —— */
+.mm-tabs { display: flex; gap: 6px; margin: 14px auto 4px; }
+.mm-tab {
+  border: 1px solid var(--line); background: #fff; color: var(--muted); border-radius: 999px;
+  padding: 7px 18px; font-size: 14px; cursor: pointer; transition: .15s;
+}
+.mm-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+/* —— 总览页 —— */
+.ov-intro { font-size: 14px; color: var(--muted); margin: 16px 0 4px; }
+.ov-intro b { color: var(--ink); font-weight: 700; }
+.ov-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 12px 0 8px; }
+.ov-card {
+  display: block; text-decoration: none; color: inherit; background: var(--card);
+  border: 1px solid var(--line); border-top: 4px solid var(--cc); border-radius: 14px;
+  padding: 16px 18px; box-shadow: 0 3px 14px rgba(30,40,90,.04); transition: .15s;
+}
+.ov-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(30,40,90,.10); background: color-mix(in srgb, var(--cc) 4%, #fff); }
+.ov-card h2 { margin: 8px 0 4px; font-size: 16.5px; color: color-mix(in srgb, var(--cc) 68%, var(--ink)); }
+.ov-no {
+  display: inline-block; background: color-mix(in srgb, var(--cc) 12%, #fff);
+  color: color-mix(in srgb, var(--cc) 85%, var(--ink));
+  border: 1px solid color-mix(in srgb, var(--cc) 30%, transparent);
+  border-radius: 8px; padding: 2px 10px; font-size: 12.5px; font-weight: 700;
+}
+.ov-stats { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.ov-secs { font-size: 12.5px; color: var(--muted); line-height: 1.8; margin: 0 0 10px; }
+.ov-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* —— 章导航与面包屑 —— */
+.mm-nav { display: flex; gap: 6px; margin: 14px 0 2px; overflow-x: auto; scrollbar-width: none; }
+.mm-nav::-webkit-scrollbar { display: none; }
+.mm-navchip {
+  flex: none; text-decoration: none; font-size: 13px; color: var(--muted);
+  background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px; transition: .15s;
+}
+.mm-navchip:hover { color: var(--cc, var(--accent)); border-color: var(--cc, var(--accent)); }
+.mm-navchip.on { background: var(--cc); border-color: var(--cc); color: #fff; font-weight: 700; }
+.mm-crumbs { font-size: 13px; color: var(--muted); margin: 4px 2px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.mm-crumbs a { color: var(--accent); text-decoration: none; }
+.mm-crumbs .mm-jump { margin-left: auto; font-size: 12.5px; }
+.mm-pager { display: flex; justify-content: space-between; gap: 10px; margin: 6px 2px 0; }
+.mm-pager a { text-decoration: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* —— 图形视图 —— */
+.mm-graph-shell { position: relative; }
+#mmGraphWrap {
+  height: calc(100vh - 330px); min-height: 440px; margin: 8px 0 4px;
+  border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(70,83,232,.06), transparent 42%),
+    radial-gradient(circle at 84% 80%, rgba(13,148,136,.06), transparent 42%),
+    #fbfcff;
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+}
+#mmGraphWrap.grabbing { cursor: grabbing; }
+#mmSvg { width: 100%; height: 100%; display: block; }
+#mmSvg text { font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+#mmSvg .node { cursor: default; }
+#mmSvg .node.has-kids { cursor: pointer; }
+#mmSvg .node rect { transition: filter .12s; }
+#mmSvg .node.has-kids:hover rect { filter: brightness(.97); stroke-width: 2; }
+#mmSvg .badge-n { font-size: 11px; fill: #fff; font-weight: 700; }
+.mm-graph-tools {
+  position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 5;
+}
+.mm-graph-tools button {
+  width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: #fff;
+  color: var(--ink); font-size: 16px; cursor: pointer; box-shadow: 0 2px 8px rgba(30,40,90,.08); line-height: 1;
+}
+.mm-graph-tools button:hover { color: var(--accent); border-color: var(--accent); }
+.mm-graph-hint {
+  position: absolute; left: 12px; bottom: 10px; font-size: 12px; color: var(--muted);
+  background: rgba(255,255,255,.85); border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; pointer-events: none;
+}
+
+/* —— 列表视图：章卡片，每章一条专属色带，头部渐变色底 —— */
+.mm-chapter {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cc) 9%, var(--card)) 0, var(--card) 96px);
+  border: 1px solid var(--line); border-left: 6px solid var(--cc);
+  border-radius: 16px; padding: 16px 20px; margin: 16px 0; box-shadow: 0 4px 16px rgba(30,40,90,.05);
+}
+.mm-ch-head { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.mm-ch-no {
+  flex: none; background: var(--cc); color: #fff; font-size: 12.5px; font-weight: 700;
+  border-radius: 8px; padding: 3px 10px; letter-spacing: 1px;
+}
+.mm-ch-head h2 { margin: 0; font-size: 17.5px; flex: 1; min-width: 0; color: color-mix(in srgb, var(--cc) 62%, var(--ink)); }
+.mm-ch-n {
+  font-size: 12px; color: color-mix(in srgb, var(--cc) 72%, var(--ink)); white-space: nowrap;
+  background: color-mix(in srgb, var(--cc) 10%, #fff); border: 1px solid color-mix(in srgb, var(--cc) 26%, transparent);
+  border-radius: 999px; padding: 2px 10px;
+}
+.mm-caret {
+  flex: none; width: 26px; height: 26px; border: none; background: transparent; color: var(--cc);
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; padding: 0;
+}
+.mm-caret:hover { background: color-mix(in srgb, var(--cc) 12%, #fff); }
+.mm-caret::before { content: ""; border-left: 7px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; transition: transform .15s; }
+.mm-caret[aria-expanded="true"] { transform: rotate(90deg); }
+
+/* —— 节：彩色编号徽章 + 章色标题 —— */
+.mm-children { margin: 8px 0 0; padding: 0 0 0 14px; border-left: 2px solid color-mix(in srgb, var(--cc) 28%, var(--line)); }
+.mm-children[hidden] { display: none; }
+.mm-sec { margin: 10px 0; }
+.mm-sec-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.mm-sec-no {
+  flex: none; font-size: 12px; font-weight: 700; border-radius: 6px; padding: 1px 8px;
+  color: color-mix(in srgb, var(--cc) 82%, var(--ink));
+  background: color-mix(in srgb, var(--cc) 12%, #fff);
+  border: 1px solid color-mix(in srgb, var(--cc) 32%, transparent);
+}
+.mm-sec-head b { font-weight: 700; font-size: 15px; color: color-mix(in srgb, var(--cc) 70%, var(--ink)); }
+.mm-sec-head .mm-caret { width: 22px; height: 22px; }
+.mm-sec-head .mm-caret::before { border-left-width: 6px; border-top-width: 4px; border-bottom-width: 4px; }
+.mm-sec-q {
+  flex: none; font-size: 12px; color: var(--muted); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; white-space: nowrap;
+}
+.mm-ch-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* —— 考点与子要点 —— */
+ul.mm-list { list-style: none; margin: 4px 0 0; padding: 0 0 0 16px; border-left: 2px dotted color-mix(in srgb, var(--cc) 38%, var(--line)); }
+ul.mm-list[hidden] { display: none; }
+.mm-pt { margin: 6px 0; border-radius: 8px; }
+.mm-pt:hover { background: color-mix(in srgb, var(--cc) 5%, transparent); }
+.mm-pt-row { display: flex; align-items: flex-start; gap: 6px; padding: 2px 6px 2px 0; }
+.mm-pt-row .mm-caret { margin-top: 3px; width: 20px; height: 20px; color: color-mix(in srgb, var(--cc) 60%, var(--muted)); }
+.mm-pt-row .mm-caret::before { border-left-width: 6px; border-top-width: 4px; border-bottom-width: 4px; }
+.mm-pt-row .mm-caret.mm-none { visibility: hidden; cursor: default; }
+.mm-pt-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 10px; background: color-mix(in srgb, var(--cc) 55%, transparent); }
+.mm-txt { flex: 1; min-width: 0; font-size: 14px; line-height: 1.7; }
+.mm-txt b { font-weight: 700; color: color-mix(in srgb, var(--cc) 72%, var(--ink)); }
+.mm-txt mark { background: #ffe9a8; color: inherit; border-radius: 3px; padding: 0 1px; }
+ul.mm-list ul.mm-list { border-left-style: solid; border-left-width: 1px; border-left-color: color-mix(in srgb, var(--cc) 22%, var(--line)); margin-left: 8px; }
+ul.mm-list ul.mm-list .mm-txt { font-size: 13.5px; color: color-mix(in srgb, var(--cc) 18%, var(--ink)); }
+ul.mm-list ul.mm-list .mm-txt b { color: color-mix(in srgb, var(--cc) 60%, var(--ink)); }
+.mm-tags { display: inline-flex; gap: 4px; flex: none; margin-left: auto; }
+.mm-tags .badge { cursor: default; }
+.badge.comp { background: #f3e8fd; color: #9333ea; }
+.mm-empty { text-align: center; color: var(--muted); padding: 40px 0; }
+.foot { padding-bottom: calc(30px + env(safe-area-inset-bottom)); }
+@media (max-width: 640px) {
+  .ov-grid { grid-template-columns: 1fr; }
+  .mm-navchip { padding: 8px 16px; font-size: 14px; }
+  .mm-crumbs .mm-jump { margin-left: 0; width: 100%; }
+  .mm-toolbar { padding: 10px 12px; }
+  .mm-toolbar input[type=search] { flex-basis: 100%; order: 3; font-size: 16px; padding: 10px 12px; }
+  .mm-toolbar .mm-count { order: 4; flex-basis: 100%; text-align: right; }
+  .mm-toolbar .chips { order: 2; }
+  .mm-toolbar button.ghost { order: 1; padding: 9px 14px; font-size: 14px; }
+  #mmGraphWrap { height: 62vh; }
+  .mm-chapter { padding: 14px 12px; }
+  .mm-ch-head { flex-wrap: wrap; }
+  .mm-ch-head h2 { font-size: 16px; flex: 1 1 auto; }
+  .mm-ch-tags { width: 100%; margin-left: 36px; }
+  .mm-sec-q { padding: 2px 10px; }
+  .mm-txt { font-size: 14.5px; }
+  .mm-tags { margin-left: 26px; width: 100%; }
+  .mm-pt-row { flex-wrap: wrap; }
+  .mm-tags .badge { padding: 3px 9px; }
+}
+@media print {
+  .mm-toolbar, .mm-caret, .topbar .back, .mm-tabs, .mm-graph-shell { display: none !important; }
+  .mm-children, ul.mm-list { display: block !important; }
+  .mm-chapter { break-inside: avoid; box-shadow: none; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="back" href="index.html">← 返回押题练习</a>
+    <h1>《计算机网络安全》考点思维导图</h1>
+    <p class="sub">2026 年 10 月自考 04751 · 8 章 39 节 152 考点 387 条 · 考法标签与 205 道押题按小节联动 · 展开状态自动保存在本机</p>
+  </div>
+</header>
+
+<!-- 总览页：只放 8 个章节卡片（渐进披露 L1） -->
+<div id="overviewApp">
+  <div class="wrap">
+    <p class="ov-intro">全书 <b>8 章 · 39 节 · 152 考点 · 387 条</b>，与 205 道押题按小节联动。点章节卡片进入该章思维导图，再逐级点开看细节。</p>
+    <div class="ov-grid" id="ovGrid"></div>
+  </div>
+</div>
+
+<!-- 章页：单章图形/列表双视图 -->
+<div id="chapterApp" hidden>
+  <div class="wrap">
+    <div class="mm-nav" id="mmNav" aria-label="章节导航"></div>
+    <div class="mm-crumbs" id="mmCrumbs"></div>
+    <div class="mm-pager"><a id="navPrev" class="ghost" href="#">←</a><a id="navNext" class="ghost" href="#">→</a></div>
+  </div>
+  <nav class="toolbar mm-toolbar wrap">
+    <div class="chips" id="typeChips">
+      <button class="chip active" data-type="all">全部考法</button>
+      <button class="chip" data-type="单选">单选</button>
+      <button class="chip" data-type="填空">填空</button>
+      <button class="chip" data-type="简答">简答</button>
+      <button class="chip" data-type="综合">综合</button>
+    </div>
+    <button id="expandAll" class="ghost">全部展开</button>
+    <button id="collapseAll" class="ghost">收起到节</button>
+    <input id="searchBox" type="search" placeholder="本章搜索考点…（如：防火墙 / DES）" aria-label="搜索考点">
+    <span class="mm-count" id="mmCount" aria-live="polite"></span>
+  </nav>
+  <div class="wrap">
+    <div class="mm-tabs" role="tablist" aria-label="视图切换">
+      <button class="mm-tab active" id="tabGraph" role="tab" aria-selected="true" aria-controls="graphView">🌳 图形视图</button>
+      <button class="mm-tab" id="tabList" role="tab" aria-selected="false" aria-controls="listView">📋 列表视图</button>
+    </div>
+  </div>
+  <section class="wrap mm-graph-shell" id="graphView" role="tabpanel" aria-labelledby="tabGraph">
+    <div id="mmGraphWrap"><svg id="mmSvg" role="img" aria-label="本章考点思维导图"></svg></div>
+    <div class="mm-graph-tools">
+      <button type="button" id="zoomIn" aria-label="放大">＋</button>
+      <button type="button" id="zoomOut" aria-label="缩小">－</button>
+      <button type="button" id="zoomFit" aria-label="适应画布">⤾</button>
+    </div>
+    <div class="mm-graph-hint">拖动平移 · 滚轮/双指缩放 · 点击节点展开或折叠</div>
+  </section>
+  <main class="wrap" id="listView" role="tabpanel" aria-labelledby="tabList" hidden>
+    <div id="tree"></div>
+  </main>
+</div>
+
+<footer class="foot wrap">依据《计算机网络安全》考核大纲与 205 道押题逐题整理 · 详细条文以教材原书为准 · 列表视图可打印（打印时自动展开全部）</footer>
+
+<script>
+// 04751 计算机网络安全 思维导图数据：n=节点文字（允许 <b> 强调），t=考法标签，c=子节点。
+// 逐题依据《04751 计算机网络安全押题及答案》205 题的题干与参考答案整理；考点措辞尽量保留答案原词。
+var MM_DATA = [
+  { n: "第一章 网络与信息安全概论", c: [
+    { n: "第一节 网络信息安全概述", c: [
+      { n: "<b>网络信息安全的基本问题</b>：五个要素", t: "填空", c: [
+        { n: "<b>可用性</b>：合法用户对信息和资源的使用不会不正当地拒绝" },
+        { n: "<b>保密性</b>：信息不泄露给未授权实体" },
+        { n: "<b>完整性</b>：数据总体的正确性与相关性，不被未授权篡改" },
+        { n: "<b>可控性</b>：对信息的传播及内容具有控制能力" },
+        { n: "<b>可审查性</b>：出现安全问题时提供依据与手段" }
+      ] },
+      { n: "<b>安全性与开放性</b>：网络的<b>安全</b>性通常是以网络服务的开放性和灵活性为代价", t: "填空" },
+      { n: "<b>现代网络信息系统的保护内容</b>", t: "单选", c: [
+        { n: "<b>保护、检测、响应、恢复</b>四个方面" }
+      ] },
+      { n: "<b>互联网不安全性的主要表现</b>", t: "简答", c: [
+        { n: "<b>开放性</b>的网络（2 分）" },
+        { n: "<b>国际性</b>的网络（2 分）" },
+        { n: "<b>自由性</b>的网络（1 分）" }
+      ] },
+      { n: "<b>电子政务/电子商务的常规安全需求</b>：保护资源、防止被非法使用和操作属于<b>访问控制需求</b>", t: "单选" }
+    ] },
+    { n: "第二节 典型网络安全威胁", c: [
+      { n: "<b>威胁因素的三个方面</b>", t: "填空", c: [
+        { n: "<b>偶发因素</b>" },
+        { n: "<b>人为因素</b>" },
+        { n: "<b>自然灾害</b>" }
+      ] },
+      { n: "<b>破坏信息完整性的因素</b>", t: "单选", c: [
+        { n: "<b>非人为因素</b>：通信传输中的干扰噪声、系统硬件或软件的差错" },
+        { n: "人为因素分<b>有意</b>：入侵、越权处理数据、隐藏破坏性程序（病毒、时间炸弹、逻辑陷阱）" },
+        { n: "人为因素分<b>无意</b>：操作失误或使用不当" }
+      ] },
+      { n: "<b>典型的网络安全威胁</b>：窃听、重传、伪造、篡改、非授权访问、拒绝服务、旁路控制", t: "单选 填空" },
+      { n: "<b>篡改</b>：对合法用户之间的通信信息进行<b>修改、删除或插入</b>，再发送给接收者", t: "单选 填空" },
+      { n: "<b>拒绝服务攻击（DoS）</b>", t: "单选", c: [
+        { n: "不断干扰网络服务系统，改变正常作业流程、执行无关程序" },
+        { n: "使系统<b>响应减慢甚至瘫痪</b>，合法用户被排斥而不能进入系统或不能得到服务" },
+        { n: "在网络环境下，拒绝服务、破坏网络和系统正常运行等都属于<b>对可用性的攻击</b>" }
+      ] },
+      { n: "<b>旁路控制</b>：攻击者<b>发掘系统的缺陷或安全脆弱性</b>", t: "单选" },
+      { n: "<b>邻近攻击</b>：未授权者可<b>物理上接近</b>网络、系统或设备，从而修改、收集信息或使系统拒绝访问", t: "填空" },
+      { n: "<b>会话拦截</b>属于<b>主动攻击</b>：攻击者访问所需信息的故意行为", t: "单选" },
+      { n: "<b>针对单机上网个人用户的攻击行为</b>", t: "简答", c: [
+        { n: "<b>端口扫描</b>" },
+        { n: "<b>拒绝服务</b>（DoS）" },
+        { n: "<b>窃取文件</b>" },
+        { n: "<b>安装后门</b>" }
+      ] }
+    ] },
+    { n: "第三节 OSI 安全体系结构", c: [
+      { n: "<b>五大类安全服务</b>", t: "填空", c: [
+        { n: "<b>鉴别（认证）服务</b>：提供对通信中对等实体和数据来源的认证" },
+        { n: "<b>访问控制服务</b>：<b>对资源提供保护，以对抗其非授权使用和操纵</b>" },
+        { n: "<b>数据机密性服务</b>：保护信息<b>不被泄露或暴露</b>给未授权的实体" },
+        { n: "<b>数据完整性服务</b>" },
+        { n: "<b>抗抵赖（不可否认性）服务</b>：通常由<b>应用层</b>提供，为电子邮件消息或文件等应用程序数据服务" }
+      ] },
+      { n: "<b>八种基本安全机制</b>：数字签名机制、加密机制、访问控制机制、数据完整性机制、鉴别交换机制、通信填充机制、路由控制机制、公证机制", t: "填空" },
+      { n: "<b>访问控制权限的用户分类</b>", t: "简答", c: [
+        { n: "<b>特殊用户</b>（系统管理员）" },
+        { n: "<b>审计用户</b>（负责系统安全与保密的监督检查）" },
+        { n: "<b>一般用户</b>" }
+      ] },
+      { n: "<b>技术措施的门与防线</b>", t: "单选", c: [
+        { n: "第一道大门：<b>用户认证</b>" },
+        { n: "最后防线：<b>审计和数据备份</b>" }
+      ] }
+    ] },
+    { n: "第四节 PPDR 模型与安全策略", c: [
+      { n: "<b>PPDR 模型</b>", t: "单选 填空", c: [
+        { n: "有一套完整理论体系，以<b>数学模型</b>作为论述基础" },
+        { n:  "是<b>基于时间</b>的安全理论" },
+        { n: "特点是<b>动态性</b>和基于时间的特性；信息系统的安全是基于时间特性的" }
+      ] },
+      { n: "<b>完整的安全策略</b>应包括：实时的<b>检测</b>和<b>响应</b>", t: "填空" },
+      { n: "<b>安全解决方案三句话</b>", t: "填空", c: [
+        { n: "<b>技术</b>是关键" },
+        { n: "<b>策略</b>是核心" },
+        { n: "<b>管理</b>是保证" }
+      ] }
+    ] },
+    { n: "第五节 安全设计规划与需求分析", c: [
+      { n: "<b>网络安全设计、规划应遵循的原则</b>", t: "单选 填空", c: [
+        { n: "<b>综合性、整体性</b>原则：运用系统工程的观点和方法分析安全问题并制定措施" },
+        { n: "<b>需求、风险、代价平衡分析</b>原则" }
+      ] },
+      { n: "<b>需求分析的四个意识</b>", t: "填空", c: [
+        { n: "<b>风险意识</b>" },
+        { n: "<b>权衡意识</b>" },
+        { n: "<b>相对意识</b>" },
+        { n: "<b>集成意识</b>" }
+      ] },
+      { n: "<b>好的解决方案</b>：不仅考虑技术，还要考虑<b>策略和管理</b>", t: "填空" },
+      { n: "<b>风险评估</b>：通过<b>工具与技术的结合</b>，对网络系统面临的安全风险进行详细的分析和评估", t: "填空" },
+      { n: "<b>安全管理需求分析</b>的三个方面", t: "简答", c: [
+        { n: "<b>内部安全管理</b>" },
+        { n: "<b>网络安全管理</b>" },
+        { n: "<b>应用安全管理</b>" }
+      ] },
+      { n: "<b>计算机信息系统安全管理的三个原则</b>", t: "填空", c: [
+        { n: "<b>多人负责</b>原则" },
+        { n: "<b>职责分离</b>原则" },
+        { n: "<b>任期有限</b>原则" }
+      ] }
+    ] },
+    { n: "第六节 常用网络术语与协议", c: [
+      { n: "<b>SMTP</b>：简单邮件传输协议——电子邮件作为网络应用服务采用的协议", t: "单选" },
+      { n: "<b>SNMP</b>：简单网络管理协议——专门设计用于在 IP 网络管理网络节点（服务器、工作站、路由器、交换机、HUB 等）的标准协议，属<b>应用层</b>协议", t: "单选" },
+      { n: "<b>CMIP</b>：通用管理信息协议——与 CMIS（通用管理信息服务）同时使用的 ISO 协议", t: "单选" },
+      { n: "<b>RPC</b>：远程过程调用协议——通过网络从远程计算机程序上请求服务，而不需要了解底层网络技术", t: "单选" },
+      { n: "<b>FAT</b>：文件配置表（File Allocation Table）文件系统——微软发明，供 MS-DOS 使用", t: "单选" }
+    ] }
+  ] },
+  { n: "第二章 物理（环境）安全", c: [
+    { n: "第一节 物理安全概述", c: [
+      { n: "<b>物理安全主要包括的四个方面</b>", t: "填空 简答", c: [
+        { n: "<b>机房（场地）环境安全</b>（2 分）" },
+        { n: "<b>通信线路安全</b>（1 分）" },
+        { n: "<b>设备安全</b>（1 分）" },
+        { n: "<b>电源安全</b>（1 分）" }
+      ] },
+      { n: "防盗、防火、防静电、防雷击、防电磁泄漏属于计算机网络安全层次中的<b>物理安全</b>", t: "填空" },
+      { n: "<b>物理安全</b>是整个计算机网络系统安全<b>的前提</b>", t: "填空" }
+    ] },
+    { n: "第二节 机房环境安全", c: [
+      { n: "<b>机房安全等级</b>：按使用性质、管理要求及其在经济和社会中的重要性划分为 <b>A、B、C 三级</b>", t: "单选" },
+      { n: "<b>GB9361-88 对 A、B 类安全机房的要求</b>", t: "单选", c: [
+        { n: "计算机系统接地应采用<b>专用地线</b>" },
+        { n: "计算站场地宜采用<b>封闭式蓄电池</b>" }
+      ] },
+      { n: "<b>机房设计首先要考虑的问题</b>：如何<b>减少无关人员进入机房的机会</b>", t: "单选" },
+      { n: "<b>机房装饰装修技术处理六注意</b>", t: "单选", c: [
+        { n: "<b>节能、防火、防尘、防静电、防水、防鼠虫</b>" }
+      ] },
+      { n: "<b>机房所在建筑物结构的安全考虑</b>", t: "单选", c: [
+        { n: "<b>电梯和楼梯不能直接进入机房</b>" },
+        { n: "建筑物周围应有足够亮度的照明设施和防止非法进入的设施" },
+        { n: "外部容易接近的进出口应有<b>栅栏或监控</b>措施" },
+        { n: "机房进出口须设置<b>应急电话</b>" },
+        { n: "供电系统应将<b>动力照明用电与计算机系统供电线路分开</b>" }
+      ] },
+      { n: "<b>机房温度</b>：一般应控制在 <b>18~22℃</b>", t: "单选", c: [
+        { n: "温度超过规定范围时，每升高 <b>10℃</b>，计算机的可靠性下降 <b>25%</b>", t: "填空" }
+      ] },
+      { n: "<b>灭火器材配置</b>：一般每 <b>4 平方米</b>至少配置一个灭火器，还应有<b>手持式灭火器</b>", t: "填空" }
+    ] },
+    { n: "第三节 设备与通信线路安全", c: [
+      { n: "<b>设备安全</b>的内容：防电磁信息辐射泄漏、防止线路截获、抗电磁干扰及电源保护等", t: "单选" },
+      { n: "<b>屏蔽</b>：电磁辐射防护措施中，为保护内部设备或电路<b>免受强电磁干扰</b>的措施", t: "填空" },
+      { n: "<b>路由器</b>属于网络和通信设备：连接多个网络或网段，把不同网络间的数据信息<b>“翻译”</b>使它们能相互读懂，构成更大的网络", t: "单选" }
+    ] },
+    { n: "第四节 电源、防雷接地与静电防护", c: [
+      { n: "<b>电源对用电设备安全的潜在威胁</b>", t: "单选", c: [
+        { n: "<b>脉动与噪声</b>" },
+        { n: "<b>电磁干扰</b>" }
+      ] },
+      { n: "<b>地线的五种种类</b>", t: "填空", c: [
+        { n: "<b>直流地</b>" },
+        { n: "<b>屏蔽地</b>" },
+        { n: "<b>静电地</b>" },
+        { n: "<b>雷击地</b>" },
+        { n: "<b>保护地</b>" }
+      ] },
+      { n: "<b>防雷击地线</b>：应远离计算机房；地线地网和接地桩与其他地线系统保持距离<b>至少 10 m 以上</b>", t: "单选" },
+      { n: "<b>静电的隐蔽性</b>：人体不能直接感知静电，除非发生静电放电；放电时人体也不一定有电击感觉", t: "填空" }
+    ] }
+  ] },
+  { n: "第三章 密码技术基础", c: [
+    { n: "第一节 密码学基本概念", c: [
+      { n: "<b>密码学</b>：数学的一个分支，研究信息系统安全保密的科学——<b>密码编码学</b>与<b>密码分析学</b>的统称", t: "填空" },
+      { n: "<b>密码技术的主要组成</b>", t: "简答", c: [
+        { n: "<b>密码编码技术</b>" },
+        { n: "<b>密码分析技术</b>" }
+      ] },
+      { n: "<b>密码学发展历程的三个阶段</b>", t: "简答", c: [
+        { n: "<b>古代加密方法</b>" },
+        { n: "<b>古典密码</b>" },
+        { n: "<b>近代密码</b>" }
+      ] },
+      { n: "<b>加密基本术语</b>", t: "单选", c: [
+        { n: "<b>明文 m</b>：作为加密输入的原始信息（需要隐藏的消息）" },
+        { n: "<b>密文 c</b>：明文被转换成的另一种隐藏形式" },
+        { n: "<b>加密</b>：明文→密文的变换；<b>解密</b>：加密的逆过程" },
+        { n: "<b>加密算法</b>：对明文加密时采用的一组规则" }
+      ] },
+      { n: "<b>保密性的来源</b>：系统的保密性主要取决于<b>密钥的保密性</b>，与算法的保密性无关——由密文和加解密算法不可能得到明文", t: "填空 单选" }
+    ] },
+    { n: "第二节 古典密码", c: [
+      { n: "<b>古典密码算法的主要种类</b>", t: "填空", c: [
+        { n: "<b>代码加密</b>" },
+        { n: "<b>代替加密</b>" },
+        { n: "<b>变位加密</b>" },
+        { n: "<b>一次性密码簿加密</b>" }
+      ] },
+      { n: "<b>简单代替密码的种类</b>", t: "填空", c: [
+        { n: "<b>移位密码</b>、替换密码、仿射密码、乘法密码、多项式代替密码、密钥短语密码" },
+        { n: "<b>移位密码</b>：将字母表的字母右移 <b>k</b> 个位置，并对字母表长度取<b>模</b>运算" }
+      ] }
+    ] },
+    { n: "第三节 秘密钥（单钥）密码体制", c: [
+      { n: "<b>单钥体制</b>", t: "单选", c: [
+        { n: "加密密钥和解密密钥<b>相同</b>（私钥/对称密码体制）" },
+        { n: "不仅可用于<b>数据加密</b>，也可用于<b>消息的认证</b>" },
+        { n: "<b>消息加密</b>采用私钥密码体制" },
+        { n: "n 个人两两保密通信共需密钥 <b>n(n-1)/2</b> 个" }
+      ] },
+      { n: "<b>DES 算法的组成</b>", t: "单选 填空", c: [
+        { n: "初始置换 <b>IP</b>" },
+        { n: "<b>16 轮迭代的乘积变换</b>：DES 的核心部分，主要完成 DES 的<b>迭代</b>运算过程" },
+        { n: "逆初始置换 <b>IP⁻¹</b>" },
+        { n: "<b>16</b> 个子密钥产生器" }
+      ] },
+      { n: "<b>IDEA</b>：中文含义<b>国际数据加密算法</b>——上海交大来学嘉与瑞士学者 James Massey 联合提出", t: "单选" }
+    ] },
+    { n: "第四节 公开钥（双钥）密码体制", c: [
+      { n: "<b>双钥体制的特点</b>", t: "单选 填空", c: [
+        { n: "可以用于<b>数字签名</b>（公钥加密体制的典型用途）" },
+        { n: "<b>大大简化了复杂的密钥分配管理问题</b>" },
+        { n: "公钥算法比私钥算法<b>慢得多</b>，约 <b>1000</b> 倍" },
+        { n: "属于双钥加密算法的是 <b>RSA</b>" }
+      ] },
+      { n: "<b>RSA 算法</b>", t: "单选 简答", c: [
+        { n: "具有高强度的<b>加密特性</b>和<b>数字签名特性</b>：既能用于数据加密，也能用于数字签名" },
+        { n: "安全性建立的理论基础：<b>大数分解</b>（3 分）和<b>素数检测</b>（2 分）" }
+      ] },
+      { n: "<b>ElGamal 算法</b>：基于<b>离散对数</b>问题的双钥体制，既可用于加密，也可用于签名", t: "填空" }
+    ] },
+    { n: "第五节 数据传输加密技术", c: [
+      { n: "<b>数据传输加密技术</b>：对<b>传输中的数据流</b>进行加密，防止通信线路上的<b>窃听、泄漏、篡改和破坏</b>", t: "简答" },
+      { n: "<b>端到端加密</b>", t: "单选", c: [
+        { n: "对<b>一对用户之间的数据</b>连续地提供保护" },
+        { n: "允许数据从<b>源节点到终点</b>的传输过程中始终以<b>密文</b>形式存在" }
+      ] },
+      { n: "<b>反静态跟踪技术</b>", t: "单选", c: [
+        { n: "对程序代码<b>分块加密执行</b>" },
+        { n: "<b>伪指令法</b>" }
+      ] }
+    ] }
+  ] },
+  { n: "第四章 数字签名与 PKI 认证技术", c: [
+    { n: "第一节 数字签名技术", c: [
+      { n: "<b>数字签名与手写签名的区别</b>", t: "单选", c: [
+        { n: "手写签名是不变的（因人而异），数字签名对不同的消息是不同的——<b>因消息而异</b>" },
+        { n: "手写签名易被模拟；数字签名在<b>密钥控制下产生</b>，无密钥时几乎无法模仿" }
+      ] },
+      { n: "<b>签名密钥对</b>：<b>公钥和私钥是成对的</b>，它们互相解密", t: "单选" },
+      { n: "存在利害冲突时，单纯的消息认证无法解决纠纷，需借助<b>数字签名</b>技术辅助进行更有效的消息认证", t: "填空" },
+      { n: "<b>数字签名方案按接收者验证方式的分类</b>", t: "简答 综合", c: [
+        { n: "<b>真数字签名</b>方式与<b>公证数字签名</b>方式" },
+        { n: "真数字签名：签名者<b>直接</b>把签名消息传送给接收者，接收者<b>无须求助第三方</b>就能验证" },
+        { n: "公证数字签名：经由可信第三方<b>公证者</b>转发；接收者不能直接验证，合法性通过公证者作为媒介保证" }
+      ] }
+    ] },
+    { n: "第二节 PKI 与数字证书", c: [
+      { n: "<b>PKI 的定义</b>：用<b>公钥密码算法原理和技术</b>来提供安全服务的<b>通用型基础平台</b>，用户可利用 PKI 平台提供的安全服务进行安全通信", t: "简答" },
+      { n: "<b>完整 PKI 系统的组成</b>", t: "单选", c: [
+        { n: "<b>认证机构 CA</b>——在 PKI 系统中居于<b>核心</b>地位" },
+        { n: "密钥管理中心 <b>KMC</b>、注册机构 <b>RA</b>、目录服务、安全认证应用软件、证书应用服务" }
+      ] },
+      { n: "<b>CA（认证机构）</b>：数字证书的<b>签发机构</b>——签发证书、认证证书、管理已颁发证书；制定政策和具体步骤验证识别用户身份，并对用户证书签名", t: "单选" },
+      { n: "<b>证书库</b>：CA 颁发证书和撤销证书的<b>集中存放地</b>", t: "填空" },
+      { n: "<b>密钥/证书生命周期</b>", t: "单选", c: [
+        { n: "<b>初始化阶段</b>：终端实体注册" },
+        { n: "<b>颁发阶段</b>：<b>密钥更新</b>发生在此阶段" },
+        { n: "<b>取消阶段</b>：<b>密钥历史档案</b>" }
+      ] }
+    ] },
+    { n: "第三节 认证体制与加密应用", c: [
+      { n: "<b>典型的认证体制</b>", t: "填空", c: [
+        { n: "<b>Kerberos</b> 体制" },
+        { n: "<b>X.509</b> 体制" },
+        { n: "<b>Light Kryptonight</b> 体制" }
+      ] },
+      { n: "<b>PGP Messaging 模块</b>：主要完成<b>邮件和即时消息等的加解密</b>", t: "单选" }
+    ] }
+  ] },
+  { n: "第五章 网络攻击与漏洞分析", c: [
+    { n: "第一节 漏洞与漏洞分析", c: [
+      { n: "<b>漏洞的定义</b>：在硬件、软件和协议的<b>具体实现</b>或<b>系统安全策略</b>上存在的<b>缺陷</b>，使攻击者能够在<b>未授权</b>的情况下访问或破坏系统", t: "简答" },
+      { n: "<b>网络安全检测的目的</b>：通过一定的技术手段<b>先于攻击者</b>发现计算机网络系统存在的<b>安全漏洞</b>", t: "填空" },
+      { n: "<b>漏洞分析的目的</b>：发现目标系统中存在的<b>安全隐患</b>，分析所使用的安全机制是否能够保证系统的<b>机密性、完整性和可用性</b>", t: "简答" },
+      { n: "<b>漏洞威胁等级</b>", t: "单选", c: [
+        { n: "按严重度分为 <b>3 个等级</b>" },
+        { n: "影响度等级 <b>3 级对应高影响度</b>" }
+      ] }
+    ] },
+    { n: "第二节 漏洞探测技术与工具", c: [
+      { n: "<b>漏洞探测技术按漏洞可利用方式划分</b>", t: "填空", c: [
+        { n: "<b>信息型</b>（被动获取信息）漏洞探测" },
+        { n: "<b>攻击型</b>漏洞探测" }
+      ] },
+      { n: "<b>基于目标的漏洞检测技术</b>：采用<b>被动的、非破坏性</b>的方法检查<b>系统属性和文件属性</b>", t: "填空" },
+      { n: "<b>Internet Scanner</b>：ISS 公司开发的网络安全评估工具，可对<b>网络漏洞</b>进行分析并提供决策支持", t: "填空" },
+      { n: "<b>X-Probe</b>：基于 <b>ICMP 响应分析</b>探测技术的<b>操作系统探测</b>工具", t: "填空" },
+      { n: "要得到主机操作系统的类型，可利用的命令：<b>telnet</b>", t: "单选" }
+    ] },
+    { n: "第三节 端口扫描技术", c: [
+      { n: "<b>端口扫描的原理</b>：向目标主机的 <b>TCP/IP 端口</b>发送<b>探测数据包</b>，并记录目标主机的响应", t: "填空" },
+      { n: "<b>三种端口扫描技术</b>", t: "填空 简答 综合", c: [
+        { n: "<b>全连接扫描</b>：主要是 <b>TCPconnect()</b> 扫描，对目标主机感兴趣的端口进行 connect() 连接试探" },
+        { n: "<b>半连接（SYN）扫描</b>：又称<b>“半开”式</b>扫描，<b>不建立完整的 TCP 连接</b>，只发送一个 <b>SYN</b> 信息包" },
+        { n: "<b>UDP 端口扫描</b>：主要用于确定目标主机上有哪些 UDP 端口是开放的" },
+        { n: "UDP 扫描细节：发送 <b>0 字节</b>的 UDP 信息包到各端口；收到 <b>ICMP 端口不可达</b>回应 → 该端口<b>关闭</b>" }
+      ] }
+    ] },
+    { n: "第四节 攻击事件与分发攻击", c: [
+      { n: "<b>互联网络蠕虫事件</b>：<b>1988 年 11 月</b>，美国康乃尔大学一年级研究生<b>罗伯特·莫里斯</b>编写蠕虫（worm）程序，在国际互联网络引起混乱、造成极大损失", t: "单选" },
+      { n: "<b>分发攻击的消除</b>", t: "填空", c: [
+        { n: "通过<b>受控分发</b>" },
+        { n: "由最终用户<b>检验软件签名</b>和<b>访问控制</b>" }
+      ] }
+    ] }
+  ] },
+  { n: "第六章 防火墙技术", c: [
+    { n: "第一节 防火墙概述", c: [
+      { n: "<b>防火墙技术</b>属于<b>内外网隔离技术</b>", t: "单选" },
+      { n: "<b>防火墙的五大基本功能</b>", t: "单选 简答", c: [
+        { n: "<b>过滤</b>进、出网络的数据" },
+        { n: "<b>管理</b>进、出网络的访问行为" },
+        { n: "<b>封堵</b>某些禁止的业务" },
+        { n: "<b>记录</b>通过防火墙的信息内容和活动" },
+        { n: "对网络攻击的<b>检测和告警</b>" }
+      ] },
+      { n: "<b>防火墙的实现技术</b>", t: "单选 填空", c: [
+        { n: "<b>包过滤技术</b>、<b>代理服务技术</b>、<b>状态检测技术</b>、<b>NAT 技术</b>" },
+        { n: "从工作原理角度分：<b>网络层防火墙</b>和<b>应用层防火墙</b>" }
+      ] },
+      { n: "<b>防火墙的局限性</b>", t: "单选", c: [
+        { n: "只能防范<b>经过其本身</b>的非法访问和攻击，对<b>绕过</b>防火墙的访问和攻击无能为力" },
+        { n: "不能解决来自<b>内部网络</b>的攻击和安全问题" },
+        { n: "不能防止受<b>病毒感染文件</b>的传输" },
+        { n: "不能防止<b>策略配置不当</b>或错误" },
+        { n: "防火墙只是整个网络安全防护体系的一部分，并非万无一失" }
+      ] },
+      { n: "<b>防火墙的联动技术</b>（下一代防火墙的内容）", t: "简答 综合", c: [
+        { n: "与<b>防病毒产品</b>联动：在<b>网关处查杀病毒</b>，把病毒发作限制在最小可能" },
+        { n: "与<b>认证系统</b>联动：制定安全策略时使用强度更大、安全性更高的认证体系" },
+        { n: "与<b>入侵检测系统</b>联动：对网络进行<b>动静结合</b>的保护" }
+      ] }
+    ] },
+    { n: "第二节 包过滤技术", c: [
+      { n: "<b>数据包过滤技术</b>", t: "单选 填空", c: [
+        { n: "工作在<b>网络层</b>对数据包进行选择，通常<b>安装在路由器上</b>" },
+        { n: "选择依据：源地址、目的地址、所用的<b>端口号</b>、<b>协议状态</b>等因素或其组合" },
+        { n: "选择的依据是系统内设置的过滤逻辑，被称为<b>访问控制列表（ACL）</b>" }
+      ] },
+      { n: "<b>IP 数据包过滤的匹配规则要素</b>", t: "填空", c: [
+        { n: "<b>数据包方向</b>" },
+        { n: "<b>远程 IP 地址</b>" },
+        { n: "<b>协议</b>的匹配类型" }
+      ] },
+      { n: "<b>包过滤器</b>通常和<b>应用网关</b>配合使用，共同组成防火墙系统", t: "填空" },
+      { n: "<b>包过滤操作流程</b>", t: "简答 综合", c: [
+        { n: "<b>分析报头字段</b> → 应用下一条过滤规则 → 判断<b>是否允许传输 / 是否阻塞传输</b> → 判断是否最后一条规则 → <b>允许传输</b>或<b>阻塞包</b>" },
+        { n: "应遵循<b>自动防止故障（fail-safe）</b>的原理：<b>未明确表示允许的便被禁止</b>" }
+      ] },
+      { n: "<b>包过滤系统的能力边界</b>：不能识别数据包中的<b>用户信息</b>，也不能识别数据包中的<b>文件信息</b>", t: "简答 综合" }
+    ] },
+    { n: "第三节 代理服务与个人防火墙", c: [
+      { n: "<b>应用代理防火墙</b>", t: "单选", c: [
+        { n: "工作在<b>应用层</b>，往往由<b>专门的工作站</b>来实现" },
+        { n: "主要特点是<b>完全“阻隔”网络通信流</b>，可以防止内外网的所有攻击" }
+      ] },
+      { n: "<b>自适应代理防火墙</b>又称为<b>电路层网关</b>防火墙", t: "填空" },
+      { n: "<b>个人防火墙的优点</b>", t: "单选", c: [
+        { n: "增加了保护级别，<b>不需要额外的硬件资源</b>" },
+        { n: "除了抵挡<b>外来攻击</b>，还可以抵挡<b>内部的攻击</b>" },
+        { n: "对公共网络中的<b>单个系统</b>提供保护，为用户<b>隐蔽暴露在网络上的信息</b>" }
+      ] },
+      { n: "<b>个人防火墙的缺点</b>", t: "单选", c: [
+        { n: "对网络只有一个<b>物理接口</b>，个人防火墙本身容易受到威胁" },
+        { n: "运行时需<b>占用个人计算机的内存、CPU 时间</b>等资源" },
+        { n: "只能对<b>单机</b>提供保护，<b>不能保护网络系统</b>" }
+      ] },
+      { n: "<b>个人防火墙对应用程序网络访问控制的三种方式</b>", t: "填空", c: [
+        { n: "<b>允许访问</b>" },
+        { n: "<b>禁止访问</b>" },
+        { n: "<b>网络访问时询问</b>" }
+      ] }
+    ] },
+    { n: "第四节 状态检测技术", c: [
+      { n: "<b>状态检测技术</b>", t: "单选 填空", c: [
+        { n: "<b>监视和跟踪每一个有效连接的状态</b>，据此决定是否允许网络数据包通过防火墙" },
+        { n: "采用<b>基于连接的状态检测机制</b>：把属于同一连接的所有包作为<b>整体的数据流</b>看待，构成<b>连接状态表</b>" }
+      ] }
+    ] },
+    { n: "第五节 防火墙体系结构", c: [
+      { n: "<b>屏蔽主机体系结构</b>：<b>堡垒主机</b>是外部（因特网）上的主机能连接到内部网络系统的<b>桥梁</b>", t: "单选" },
+      { n: "<b>双重宿主主机体系结构</b>：IP 数据包从一个网络<b>并不是直接发送</b>到其他网络", t: "单选" },
+      { n: "<b>屏蔽子网体系结构</b>", t: "单选", c: [
+        { n: "侵袭者必须要通过<b>两个路由器</b>才能侵入内部网络" },
+        { n: "即使设法侵入<b>堡垒主机</b>，仍必须通过<b>内部路由器</b>" }
+      ] }
+    ] },
+    { n: "第六节 NAT 与 VPN 技术", c: [
+      { n: "<b>NAT</b>：Network Address Translation，<b>网络地址转换</b>——1994 年提出", t: "单选" },
+      { n: "<b>NAT 的类型</b>", t: "简答", c: [
+        { n: "<b>静态 NAT</b>（2 分）" },
+        { n: "<b>动态地址 NAT</b>（2 分）" },
+        { n: "<b>网络地址端口转换 NAPT</b>（1 分）" }
+      ] },
+      { n: "<b>VPN</b>：Virtual Private Network，<b>虚拟专用网络</b>", t: "单选" }
+    ] },
+    { n: "第七节 防火墙相关配置命令", c: [
+      { n: "<b>指定防火墙接口属性</b>：命令 <b>fwip</b>（Linux 防火墙配置工具）", t: "单选", c: [
+        { n: "<b>fwip add eth0 o</b>：指定 E0 为<b>外接口</b>" },
+        { n: "<b>fwip add eth1 s</b>：指定 E1 为 <b>SSN 接口</b>——公共服务器所在的网络都经此接口出去" },
+        { n: "<b>fwip add eth2 … i</b>：指定 E2 为<b>内部接口</b>" }
+      ] },
+      { n: "配置<b>域名服务器</b>使用的命令：<b>dns</b>", t: "单选" }
+    ] }
+  ] },
+  { n: "第七章 入侵检测技术", c: [
+    { n: "第一节 入侵检测系统概述与构成", c: [
+      { n: "<b>入侵检测系统的构成（四部分）</b>", t: "简答", c: [
+        { n: "<b>数据提取</b>" },
+        { n: "<b>入侵分析</b>" },
+        { n: "<b>响应处理</b>" },
+        { n: "<b>远程管理</b>" }
+      ] },
+      { n: "<b>入侵检测系统的功能结构</b>", t: "填空", c: [
+        { n: "<b>中心检测平台</b>" },
+        { n: "<b>代理服务器</b>" }
+      ] },
+      { n: "<b>中心检测平台</b>由<b>专家系统</b>、<b>知识库</b>和<b>管理员</b>组成；专家系统的建立依赖于<b>知识库的完备性</b>", t: "填空" },
+      { n: "<b>中心检测平台与代理服务器的通信</b>：通过安全的<b>远程过程调用（RPC）</b>进行", t: "单选" },
+      { n: "<b>入侵检测系统需要解决的两个问题</b>", t: "简答", c: [
+        { n: "如何<b>可靠地提取描述行为特征的数据</b>" },
+        { n: "如何根据特征数据，<b>高效并准确地判定行为的性质</b>" }
+      ] }
+    ] },
+    { n: "第二节 入侵检测系统的分类", c: [
+      { n: "<b>IDS 分类的三个维度</b>", t: "简答", c: [
+        { n: "<b>数据源</b>" },
+        { n: "<b>检测理论</b>" },
+        { n: "<b>检测时效</b>" }
+      ] },
+      { n: "<b>基于网络的入侵检测系统</b>：放置在<b>共享网段</b>的重要位置，对监听采集的每个（或可疑的）数据包进行<b>特征分析</b>", t: "填空" },
+      { n: "<b>基于网关的入侵检测系统</b>：由新一代的<b>高速网络</b>结合<b>路由与高速交换技术</b>构成", t: "单选" }
+    ] },
+    { n: "第三节 入侵检测分析方法", c: [
+      { n: "<b>误用检测：条件概率预测法</b>——基于<b>统计理论</b>来量化全部外部网络事件序列中存在入侵事件的<b>可能程度</b>", t: "单选" },
+      { n: "<b>神经网络方法</b>：使用<b>自适应学习技术</b>提取异常行为的特征，需对<b>训练数据集</b>进行学习以得出<b>正常的行为模式</b>", t: "单选" },
+      { n: "<b>异常检测</b>", t: "填空", c: [
+        { n: "根据使用者的<b>行为或资源使用状况</b>的正常程度来判断是否入侵，<b>不依赖于具体行为是否出现</b>来检测" },
+        { n: "基于一个假定：用户的行为是可预测的、遵循<b>一致性</b>模式的" },
+        { n: "用户行为的<b>特征轮廓</b>由<b>度量集</b>描述，通常与某个<b>检测阈值</b>或某个域相联系" }
+      ] }
+    ] },
+    { n: "第四节 入侵检测分析模型", c: [
+      { n: "<b>分析模型的三个阶段</b>", t: "单选", c: [
+        { n: "① <b>构建分析器</b>：主要进行分析引擎的构造" },
+        { n: "② 对<b>实际现场数据</b>进行分析：现场实际事件流的分析" },
+        { n: "③ <b>反馈和提炼</b>：分析引擎的维护及规则集提炼等——构建分析器的<b>最后阶段</b>" }
+      ] },
+      { n: "<b>构建分析器的第一个功能步骤</b>：<b>收集或生成事件信息</b>", t: "单选" },
+      { n: "<b>Dennings 原始模型</b>", t: "单选", c: [
+        { n: "<b>多变量模型</b>属于 Dennings 的原始模型" },
+        { n: "多变量模型是<b>平均和标准偏差模型</b>的一个<b>扩展</b>" }
+      ] }
+    ] },
+    { n: "第五节 CIDF、标准与 Snort", c: [
+      { n: "<b>公共入侵检测框架 CIDF 的四个基本组件</b>", t: "单选 简答", c: [
+        { n: "<b>事件产生器</b>" },
+        { n: "<b>事件分析器</b>" },
+        { n: "<b>响应单元</b>" },
+        { n: "<b>事件数据库</b>——以<b>文件或数据流</b>的形式出现（其他三个组件通常以<b>应用程序</b>形式出现）" }
+      ] },
+      { n: "<b>IDS 标准：IDWG 的三项建议草案</b>", t: "填空", c: [
+        { n: "入侵检测<b>消息交换格式</b>" },
+        { n: "入侵检测<b>交换协议</b>" },
+        { n: "<b>隧道</b>轮廓（draft）" }
+      ] },
+      { n: "<b>Snort 的安全防护措施</b>", t: "简答", c: [
+        { n: "<b>加固</b>运行 Snort 系统的主机（2 分）" },
+        { n: "在<b>隐蔽端口</b>上运行 Snort（2 分）" },
+        { n: "在<b>不配置 IP 地址</b>的接口上运行 Snort（1 分）" }
+      ] }
+    ] }
+  ] },
+  { n: "第八章 计算机病毒与恶意代码", c: [
+    { n: "第一节 计算机病毒基本概念", c: [
+      { n: "<b>计算机病毒的定义</b>：编制或者在计算机程序中插入的<b>破坏计算机功能或者毁坏数据</b>、影响计算机使用、并能<b>自我复制</b>的一组计算机指令或者程序代码", t: "单选 填空" },
+      { n: "<b>最重要的特征</b>：<b>传染性</b>——也是判断一段程序代码是否为计算机病毒的<b>依据</b>", t: "单选" },
+      { n: "<b>宿主</b>：病毒依附于其他媒体而寄生的能力，这种媒体称为病毒的宿主", t: "填空" },
+      { n: "<b>网络环境中病毒的新特点</b>", t: "填空", c: [
+        { n: "<b>传染方式多</b>" },
+        { n: "<b>传播速度快</b>" },
+        { n: "<b>清除难度大</b>" },
+        { n: "<b>破坏性强</b>" },
+        { n: "<b>潜在性深</b>" }
+      ] }
+    ] },
+    { n: "第二节 病毒的逻辑结构与分类", c: [
+      { n: "<b>宏观逻辑结构的三个模块</b>", t: "单选 填空 简答", c: [
+        { n: "病毒的<b>引导模块</b>（2 分）" },
+        { n: "病毒的<b>传染模块</b>（2 分）——各种病毒<b>必不可少</b>的模块" },
+        { n: "病毒的<b>发作模块</b>（表现和破坏）" }
+      ] },
+      { n: "<b>按寄生方式分类</b>", t: "简答", c: [
+        { n: "<b>引导型病毒</b>" },
+        { n: "<b>文件型病毒</b>：专门感染系统中<b>可执行文件</b>（扩展名 COM、EXE）" },
+        { n: "<b>复合型病毒</b>：具有<b>引导型和文件型</b>两种寄生方式" }
+      ] },
+      { n: "<b>复合型病毒的另一含义</b>：恶意代码通过<b>多种方式传播</b>就形成复合型病毒——著名的<b>尼姆达（Nimda）蠕虫</b>就是例子", t: "单选" },
+      { n: "<b>按传播媒介分类</b>", t: "单选", c: [
+        { n: "<b>单机病毒</b>" },
+        { n: "<b>网络病毒</b>" }
+      ] },
+      { n: "<b>大麻病毒</b>属于<b>操作系统型病毒</b>", t: "单选" },
+      { n: "<b>CIH 病毒</b>：首例直接<b>攻击和破坏计算机硬件系统</b>的病毒，给用户带来摧毁性结局", t: "单选" }
+    ] },
+    { n: "第三节 病毒的检测手段", c: [
+      { n: "<b>四种检测手段</b>", t: "单选 填空 简答", c: [
+        { n: "<b>特征代码法</b>" },
+        { n: "<b>校验和法</b>" },
+        { n: "<b>行为监测法</b>" },
+        { n: "<b>软件模拟法</b>" }
+      ] },
+      { n: "<b>特征代码法的优缺点</b>", t: "单选", c: [
+        { n: "优点：<b>检测准确</b>、可<b>识别病毒的名称</b>、<b>误报警率低</b>、依据检测结果可做<b>杀毒处理</b>" },
+        { n: "缺点一：<b>速度慢</b>" },
+        { n: "缺点二：不能检查<b>多形性病毒</b>" },
+        { n: "缺点三：不能对付<b>隐蔽性病毒</b>" },
+        { n: "缺点四：不能检查<b>未知病毒</b>" }
+      ] },
+      { n: "<b>行为监测法</b>：<b>不能识别病毒名称</b>", t: "单选" },
+      { n: "<b>软件模拟法</b>：为检测<b>多态性病毒</b>应用的新检测方法", t: "填空" },
+      { n: "<b>检查中断向量的变化</b>：检查系统的中断向量表，其备份文件一般为 <b>INT.DAT</b>", t: "单选" },
+      { n: "<b>与病毒有关的重要中断</b>：<b>INT 21H 表示 DOS 功能调用</b>", t: "单选" },
+      { n: "<b>CPU 处理中断的优先权</b>", t: "单选", c: [
+        { n: "优先权<b>最高</b>：<b>除法错</b>中断" },
+        { n: "优先权<b>最低</b>：<b>单步</b>中断" }
+      ] }
+    ] },
+    { n: "第四节 病毒的防范技术", c: [
+      { n: "<b>防范感染病毒的途径（两类）</b>", t: "填空", c: [
+        { n: "用户遵守和加强<b>安全操作控制措施</b>" },
+        { n: "使用<b>防病毒工具</b>" }
+      ] },
+      { n: "<b>网络防病毒技术</b>", t: "简答", c: [
+        { n: "<b>预防</b>病毒" },
+        { n: "<b>检测</b>病毒" },
+        { n: "<b>消除</b>病毒" }
+      ] }
+    ] },
+    { n: "第五节 恶意代码的关键技术与防范", c: [
+      { n: "<b>恶意代码的三类关键技术</b>", t: "填空 简答 综合", c: [
+        { n: "<b>生存技术</b>：禁止跟踪中断、模糊变换技术等（归①②⑨⑩）" },
+        { n: "<b>攻击技术</b>：<b>进程注入</b>、<b>三线程</b>、<b>端口复用</b>技术等（归③④⑥⑧）" },
+        { n: "<b>隐蔽技术</b>：（归⑤⑦）" }
+      ] },
+      { n: "<b>模糊变换技术</b>属于恶意代码的<b>生存技术</b>", t: "单选" },
+      { n: "<b>恶意代码的防范</b>", t: "简答", c: [
+        { n: "及时<b>更新系统</b>，修补安全漏洞" },
+        { n: "设置<b>安全策略</b>，限制脚本程序的运行" },
+        { n: "启用<b>防火墙</b>，过滤不必要的服务和系统信息" },
+        { n: "养成<b>良好的上网习惯</b>" }
+      ] }
+    ] }
+  ] }
+];
+
+// —— 共享状态与工具 ——
+(function () {
+  var LS_KEY = "netsec04751.mindmap.v1"; // 独立于题库记录键 netsec04751.v1
+  // 柔和协调的八章色带（Tailwind 500 级：同饱和度、同明度，两两并置不刺眼）
+  var COLORS = ["#6366f1", "#0ea5e9", "#14b8a6", "#22c55e", "#f59e0b", "#f97316", "#8b5cf6", "#f43f5e"];
+  var BADGE = { "单选": "single", "填空": "blank", "简答": "essay", "综合": "comp" };
+  var TAGC = { "单选": "#2563eb", "填空": "#059669", "简答": "#d97706", "综合": "#9333ea" };
+  // 押题联动：SEC_Q=各小节填空/简答押题数，CH_Q=各章押题总数（含单选，合计 205）。
+  // 题号↔小节映射表在 data/mindmap_sections.json（205 题逐题挂载，题库更新后需同步两表）。
+  var SEC_Q = {"1.1":3,"1.2":4,"1.3":3,"1.4":3,"1.5":6,"2.1":3,"2.2":4,"2.3":1,"2.4":2,"3.1":3,"3.2":3,"3.3":1,"3.4":3,"3.5":1,"4.1":2,"4.2":2,"4.3":1,"5.1":3,"5.2":4,"5.3":5,"5.4":1,"6.1":3,"6.2":7,"6.3":2,"6.4":1,"6.6":1,"7.1":5,"7.2":2,"7.3":3,"7.5":3,"8.1":3,"8.2":4,"8.3":3,"8.4":2,"8.5":3};
+  var CH_Q = [40, 21, 27, 13, 18, 32, 22, 32];
+
+  var overviewApp = document.getElementById("overviewApp");
+  var chapterApp = document.getElementById("chapterApp");
+  var tree = document.getElementById("tree");
+  var countEl = document.getElementById("mmCount");
+  var searchEl = document.getElementById("searchBox");
+  var navEl = document.getElementById("mmNav");
+  var crumbsEl = document.getElementById("mmCrumbs");
+  var typeState = "all";
+  var query = "";
+  var curCi = -2; // 当前章；-1=总览，-2=未初始化（保证首帧渲染）
+  var curTab = "graph";
+
+  // 展开状态：列表默认节展开；图形默认章展开（每屏节点少，渐进披露）
+  function defaultExp() {
+    var s = {};
+    MM_DATA.forEach(function (ch, i) {
+      s["c" + i] = true;
+      (ch.c || []).forEach(function (sec, j) { s["c" + i + "s" + j] = true; });
+    });
+    return s;
+  }
+  var exp = defaultExp();
+  var gexp = {};
+  try {
+    var saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+    if (saved && saved.exp) { exp = {}; saved.exp.forEach(function (id) { exp[id] = true; }); }
+    if (saved && saved.gexp) { gexp = {}; saved.gexp.forEach(function (id) { gexp[id] = true; }); }
+  } catch (e) {}
+  function persist() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ exp: Object.keys(exp), gexp: Object.keys(gexp) })); } catch (e) {}
+  }
+
+  function plain(html) { return html.replace(/<[^>]+>/g, ""); }
+  function hasTag(node, t) { return node.t && node.t.indexOf(t) >= 0; }
+  function matchSub(node) {
+    var qOk = !query || plain(node.n).toLowerCase().indexOf(query) >= 0;
+    if (qOk && (typeState === "all" || hasTag(node, typeState))) return true;
+    var kids = node.c || [];
+    for (var i = 0; i < kids.length; i++) if (matchSub(kids[i])) return true;
+    return false;
+  }
+  function filtering() { return typeState !== "all" || !!query; }
+  function splitNo(s) {
+    var m = s.match(/^(第[一二三四五六七八九十]+[章节])\s*(.*)$/);
+    return m ? [m[1], m[2]] : ["", s];
+  }
+  function tagsHtml(t) {
+    if (!t) return "";
+    return '<span class="mm-tags">' + t.split(" ").map(function (name) {
+      return '<span class="badge ' + (BADGE[name] || "") + '">' + name + "</span>";
+    }).join("") + "</span>";
+  }
+  function tagDist(ch) {
+    var d = { "单选": 0, "填空": 0, "简答": 0, "综合": 0 };
+    (function walk(nd) {
+      (nd.t || "").split(" ").forEach(function (t) { if (d[t] !== undefined) d[t]++; });
+      (nd.c || []).forEach(walk);
+    })(ch);
+    return d;
+  }
+  function highlight(el, q) {
+    if (!q) return;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    var texts = [];
+    while (walker.nextNode()) texts.push(walker.currentNode);
+    texts.forEach(function (tn) {
+      var low = tn.nodeValue.toLowerCase(), idx = low.indexOf(q);
+      if (idx < 0) return;
+      var frag = document.createDocumentFragment(), pos = 0;
+      while (idx >= 0) {
+        if (idx > pos) frag.appendChild(document.createTextNode(tn.nodeValue.slice(pos, idx)));
+        var mk = document.createElement("mark");
+        mk.textContent = tn.nodeValue.slice(idx, idx + q.length);
+        frag.appendChild(mk);
+        pos = idx + q.length;
+        idx = low.indexOf(q, pos);
+      }
+      if (pos < tn.nodeValue.length) frag.appendChild(document.createTextNode(tn.nodeValue.slice(pos)));
+      tn.parentNode.replaceChild(frag, tn);
+    });
+  }
+
+  function isOpen(id) { return filtering() ? true : !!exp[id]; }
+  function isOpenG(id) { return filtering() ? true : !!gexp[id]; }
+  function toggle(id) { if (exp[id]) delete exp[id]; else exp[id] = true; persist(); renderList(); }
+  function toggleG(id) { if (gexp[id]) delete gexp[id]; else gexp[id] = true; persist(); fitGraph(); }
+
+  /* ================= 图形视图（单章子图） ================= */
+  var svg = document.getElementById("mmSvg");
+  var gwrap = document.getElementById("mmGraphWrap");
+  var NS = "http://www.w3.org/2000/svg";
+  var GAP_X = 56, GAP_Y = 16, PADX = 12, PADY = 9, MAXW = 240;
+  var view = { k: 1, tx: 20, ty: 20 };
+  var measurer = document.createElement("canvas").getContext("2d");
+
+  function fontFor(depth) {
+    var f = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif';
+    return (depth === 0 ? "700 15px " : depth === 1 ? "600 14px " : "13px ") + f;
+  }
+  function wrap(text, maxW, font) {
+    measurer.font = font;
+    var lines = [], cur = "";
+    for (var i = 0; i < text.length; i++) {
+      var t = cur + text[i];
+      if (measurer.measureText(t).width > maxW && cur) { lines.push(cur); cur = text[i]; }
+      else cur = t;
+    }
+    if (cur) lines.push(cur);
+    if (lines.length > 4) { lines = lines.slice(0, 4); lines[3] = lines[3].slice(0, -1) + "…"; }
+    return lines;
+  }
+  function hexA(hex, a) {
+    var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + a + ")";
+  }
+  function darken(hex, amt) {
+    var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    r = Math.round(r * (1 - amt)); g = Math.round(g * (1 - amt)); b = Math.round(b * (1 - amt));
+    return "rgb(" + r + "," + g + "," + b + ")";
+  }
+
+  // 深度：0=章 1=节 2=考点 3=子要点；节点 id 与列表共用（c0 / c0s1 / c0s1p2 / …d3）
+  function layoutGraph(ci) {
+    var cursorY = 0, nodes = [], edges = [];
+    function childId(pid, depth, i) { return pid + (depth === 0 ? "s" : depth === 1 ? "p" : "d") + i; }
+    function visit(src, id, depth, x, color, parentBox) {
+      var label = plain(src.n);
+      if (depth === 0 && CH_Q[ci]) label += " · 押题" + CH_Q[ci] + "题";
+      if (depth === 1) { var sk = (ci + 1) + "." + (parseInt(id.slice(id.indexOf("s") + 1), 10) + 1); if (SEC_Q[sk]) label += " · 📝" + SEC_Q[sk]; }
+      var font = fontFor(depth);
+      var lines = wrap(label, MAXW, font);
+      var lh = depth <= 1 ? 22 : 19;
+      measurer.font = font;
+      var w = 0;
+      lines.forEach(function (l) { w = Math.max(w, measurer.measureText(l).width); });
+      var tagLine = src.t && depth >= 2 ? src.t.split(" ").join(" · ") : "";
+      var h = PADY * 2 + lines.length * lh + (tagLine ? 17 : 0);
+      if (tagLine) {
+        measurer.font = "11px " + '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif';
+        w = Math.max(w, measurer.measureText("〔" + tagLine + "〕").width);
+      }
+      w = Math.min(MAXW, Math.ceil(w)) + PADX * 2;
+      var box = { id: id, depth: depth, x: x, y: 0, w: w, h: h, lines: lines, lh: lh, tagLine: tagLine, color: color, src: src };
+      var kids = (src.c || []).filter(function (k) { return !filtering() || matchSub(k); });
+      if (!kids.length || !isOpenG(id)) {
+        box.y = cursorY; cursorY += h + GAP_Y;
+      } else {
+        var cx = x + w + GAP_X;
+        var placed = kids.map(function (k, i) { return visit(k, childId(id, depth, i), depth + 1, cx, color, box); });
+        box.y = (placed[0].y + placed[placed.length - 1].y) / 2;
+      }
+      nodes.push(box);
+      if (parentBox) edges.push([parentBox, box]);
+      return box;
+    }
+    var rootBox = visit(MM_DATA[ci], "c" + ci, 0, 0, COLORS[ci % COLORS.length], null);
+    return { nodes: nodes, edges: edges, height: cursorY };
+  }
+
+  function renderGraph() {
+    if (curCi < 0 || document.getElementById("graphView").hidden) return;
+    var L = layoutGraph(curCi);
+    var contentW = 40;
+    L.nodes.forEach(function (n) { contentW = Math.max(contentW, n.x + n.w); });
+    contentW += 40;
+    var contentH = Math.max(L.height + 40, 200);
+    svg.innerHTML = "";
+    var g = document.createElementNS(NS, "g");
+    g.setAttribute("id", "mmViewG");
+    g.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.k + ")");
+    svg.appendChild(g);
+    L.edges.forEach(function (e) {
+      var p = e[0], c = e[1];
+      var x1 = p.x + p.w, y1 = p.y + p.h / 2, x2 = c.x, y2 = c.y + c.h / 2;
+      var mx = (x1 + x2) / 2;
+      var path = document.createElementNS(NS, "path");
+      path.setAttribute("d", "M" + x1 + "," + y1 + " C" + mx + "," + y1 + " " + mx + "," + y2 + " " + x2 + "," + y2);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", hexA(c.color, c.depth <= 1 ? 0.45 : 0.3));
+      path.setAttribute("stroke-width", c.depth <= 1 ? 2.8 : c.depth === 2 ? 1.8 : 1.2);
+      path.setAttribute("stroke-linecap", "round");
+      g.appendChild(path);
+    });
+    L.nodes.forEach(function (n) {
+      var grp = document.createElementNS(NS, "g");
+      grp.setAttribute("class", "node" + ((n.src.c || []).length ? " has-kids" : ""));
+      grp.setAttribute("transform", "translate(" + n.x + "," + n.y + ")");
+      var rect = document.createElementNS(NS, "rect");
+      rect.setAttribute("width", n.w); rect.setAttribute("height", n.h);
+      rect.setAttribute("rx", n.depth === 0 ? 12 : 10);
+      rect.setAttribute("fill", n.depth === 0 ? n.color : n.depth === 1 ? hexA(n.color, 0.09) : n.depth === 2 ? "#ffffff" : hexA(n.color, 0.045));
+      rect.setAttribute("stroke", n.depth === 0 ? "none" : n.depth === 3 ? hexA(n.color, 0.22) : hexA(n.color, 0.38));
+      rect.setAttribute("stroke-width", 1.2);
+      grp.appendChild(rect);
+      var title = document.createElementNS(NS, "title");
+      title.textContent = plain(n.src.n);
+      grp.appendChild(title);
+      var text = document.createElementNS(NS, "text");
+      n.lines.forEach(function (l, i) {
+        var ts = document.createElementNS(NS, "tspan");
+        ts.setAttribute("x", PADX);
+        ts.setAttribute("y", PADY + n.lh * (i + 0.82));
+        ts.setAttribute("font-size", n.depth === 0 ? 15 : n.depth === 1 ? 14 : 13);
+        ts.setAttribute("font-weight", n.depth <= 1 ? (n.depth === 0 ? 700 : 600) : 400);
+        ts.setAttribute("fill", n.depth === 0 ? "#ffffff" : n.depth === 1 ? darken(n.color, 0.28) : n.depth === 2 ? "#2b3346" : "#4b5262");
+        ts.textContent = l;
+        text.appendChild(ts);
+      });
+      if (n.tagLine) {
+        var tg = document.createElementNS(NS, "tspan");
+        tg.setAttribute("x", PADX);
+        tg.setAttribute("y", PADY + n.lh * n.lines.length + 14);
+        tg.setAttribute("font-size", 11);
+        tg.setAttribute("fill", TAGC[n.src.t.split(" ")[0]] || "#6b7280");
+        tg.textContent = "〔" + n.tagLine + "〕";
+        text.appendChild(tg);
+      }
+      grp.appendChild(text);
+      var kidsN = (n.src.c || []).length;
+      if (kidsN && !isOpenG(n.id)) {
+        var bc = document.createElementNS(NS, "circle");
+        bc.setAttribute("cx", n.w + 1); bc.setAttribute("cy", n.h / 2); bc.setAttribute("r", 9);
+        bc.setAttribute("fill", n.color);
+        grp.appendChild(bc);
+        var bt = document.createElementNS(NS, "text");
+        bt.setAttribute("x", n.w + 1); bt.setAttribute("y", n.h / 2 + 4);
+        bt.setAttribute("text-anchor", "middle");
+        bt.setAttribute("class", "badge-n");
+        bt.textContent = kidsN;
+        grp.appendChild(bt);
+      }
+      // 节点展开不绑 click：画布 setPointerCapture 会把 click 重定向到容器，
+      // 改在 pointerup 里按「按下未移动」判定（见下方指针处理），这里只留节点 id。
+      if (kidsN) grp.setAttribute("data-nid", n.id);
+      g.appendChild(grp);
+    });
+    applyView();
+  }
+  function applyView() {
+    var vg = svg.querySelector("#mmViewG");
+    if (vg) vg.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.k + ")");
+  }
+  function fitGraph() {
+    if (curCi < 0) return;
+    var L = layoutGraph(curCi);
+    var contentW = 40, contentH = Math.max(L.height + 40, 200);
+    L.nodes.forEach(function (n) { contentW = Math.max(contentW, n.x + n.w); });
+    contentW += 40;
+    var W = gwrap.clientWidth, H = gwrap.clientHeight;
+    view.k = Math.min((W - 24) / contentW, (H - 24) / contentH, 1);
+    view.tx = (W - contentW * view.k) / 2;
+    view.ty = Math.max(12, (H - contentH * view.k) / 2);
+    renderGraph();
+  }
+  function zoomAt(factor, cx, cy) {
+    var k2 = Math.min(2.5, Math.max(0.25, view.k * factor));
+    var r = k2 / view.k;
+    view.tx = cx - (cx - view.tx) * r;
+    view.ty = cy - (cy - view.ty) * r;
+    view.k = k2;
+    applyView();
+  }
+  svg.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var rect = gwrap.getBoundingClientRect();
+    zoomAt(Math.pow(1.0015, -e.deltaY), e.clientX - rect.left, e.clientY - rect.top);
+  }, { passive: false });
+  document.getElementById("zoomIn").addEventListener("click", function () { zoomAt(1.25, gwrap.clientWidth / 2, gwrap.clientHeight / 2); });
+  document.getElementById("zoomOut").addEventListener("click", function () { zoomAt(0.8, gwrap.clientWidth / 2, gwrap.clientHeight / 2); });
+  document.getElementById("zoomFit").addEventListener("click", fitGraph);
+
+  var ptrs = {}, pinchDist = 0;
+  var downX = 0, downY = 0, downNid = null, movedFar = false;
+  gwrap.addEventListener("pointerdown", function (e) {
+    if (!Object.keys(ptrs).length) {
+      downX = e.clientX; downY = e.clientY; movedFar = false;
+      var gn = e.target.closest ? e.target.closest("g.node") : null;
+      downNid = gn ? gn.getAttribute("data-nid") : null;
+    }
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    gwrap.classList.add("grabbing");
+    gwrap.setPointerCapture(e.pointerId);
+    if (Object.keys(ptrs).length === 2) { pinchDist = dist(); downNid = null; }
+  });
+  function dist() {
+    var a = Object.values(ptrs);
+    return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+  }
+  gwrap.addEventListener("pointermove", function (e) {
+    if (!ptrs[e.pointerId]) return;
+    var ids = Object.keys(ptrs);
+    if (ids.length === 1) {
+      if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) movedFar = true;
+      view.tx += e.clientX - ptrs[e.pointerId].x;
+      view.ty += e.clientY - ptrs[e.pointerId].y;
+      ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+      applyView();
+    } else if (ids.length === 2) {
+      ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var d = dist();
+      if (pinchDist > 0) {
+        var rect = gwrap.getBoundingClientRect();
+        var a = Object.values(ptrs);
+        zoomAt(d / pinchDist, (a[0].x + a[1].x) / 2 - rect.left, (a[0].y + a[1].y) / 2 - rect.top);
+      }
+      pinchDist = d;
+    }
+  });
+  ["pointerup", "pointercancel"].forEach(function (ev) {
+    gwrap.addEventListener(ev, function (e) {
+      // 真实点击判定：单指、按下与抬起间未拖动、且按在有子节点的卡片上 → 展开/折叠
+      if (ev === "pointerup" && downNid && !movedFar && Object.keys(ptrs).length === 1) toggleG(downNid);
+      downNid = null;
+      delete ptrs[e.pointerId];
+      if (!Object.keys(ptrs).length) gwrap.classList.remove("grabbing");
+      pinchDist = 0;
+    });
+  });
+
+  /* ================= 列表视图（单章） ================= */
+  function ptNode(node, id, depth) {
+    var li = document.createElement("li");
+    li.className = "mm-pt";
+    var kids = node.c || [];
+    var open = isOpen(id);
+    var row = document.createElement("div");
+    row.className = "mm-pt-row";
+    var caret = document.createElement("button");
+    caret.type = "button";
+    caret.className = "mm-caret" + (kids.length ? "" : " mm-none");
+    if (kids.length) {
+      caret.setAttribute("aria-expanded", open ? "true" : "false");
+      caret.setAttribute("aria-label", (open ? "折叠" : "展开") + " " + plain(node.n));
+      caret.addEventListener("click", function (ev) { ev.stopPropagation(); toggle(id); });
+    } else { caret.tabIndex = -1; caret.setAttribute("aria-hidden", "true"); }
+    row.appendChild(caret);
+    if (depth >= 2) {
+      var dot = document.createElement("span");
+      dot.className = "mm-pt-dot";
+      dot.setAttribute("aria-hidden", "true");
+      row.appendChild(dot);
+    }
+    var txt = document.createElement("span");
+    txt.className = "mm-txt";
+    txt.innerHTML = node.n;
+    highlight(txt, query);
+    row.appendChild(txt);
+    if (node.t) row.insertAdjacentHTML("beforeend", tagsHtml(node.t));
+    li.appendChild(row);
+    if (kids.length && open) {
+      var ul = document.createElement("ul");
+      ul.className = "mm-list";
+      kids.forEach(function (k, idx) { ul.appendChild(ptNode(k, id + "d" + idx, depth + 1)); });
+      li.appendChild(ul);
+    }
+    return li;
+  }
+
+  function renderList() {
+    if (curCi < 0) return;
+    var ch = MM_DATA[curCi], cid = "c" + curCi, i = curCi;
+    tree.innerHTML = "";
+    var shown = 0;
+    if (filtering() && !matchSub(ch)) {
+      tree.innerHTML = '<div class="mm-empty">本章没有匹配的考点' + "</div>";
+    } else {
+      var chPts = 0;
+      (ch.c || []).forEach(function (sec) { (sec.c || []).forEach(function () { chPts++; }); });
+      var card = document.createElement("section");
+      card.className = "mm-chapter";
+      card.style.setProperty("--cc", COLORS[i % COLORS.length]);
+      var chOpen = isOpen(cid);
+      var head = document.createElement("div");
+      head.className = "mm-ch-head";
+      var hc = document.createElement("button");
+      hc.type = "button"; hc.className = "mm-caret";
+      hc.setAttribute("aria-expanded", chOpen ? "true" : "false");
+      hc.setAttribute("aria-label", (chOpen ? "折叠 " : "展开 ") + ch.n);
+      hc.addEventListener("click", function () { toggle(cid); });
+      head.appendChild(hc);
+      var cno = splitNo(ch.n);
+      var chip = document.createElement("span");
+      chip.className = "mm-ch-no";
+      chip.textContent = cno[0];
+      head.appendChild(chip);
+      var h2 = document.createElement("h2");
+      h2.textContent = cno[1];
+      head.appendChild(h2);
+      var n = document.createElement("span");
+      n.className = "mm-ch-n";
+      n.textContent = (ch.c || []).length + " 节 · " + chPts + " 考点 · 押题 " + (CH_Q[i] || 0) + " 题";
+      head.appendChild(n);
+      var dist2 = tagDist(ch);
+      var dt = document.createElement("span");
+      dt.className = "mm-ch-tags";
+      ["单选", "填空", "简答", "综合"].forEach(function (name) {
+        if (dist2[name]) dt.insertAdjacentHTML("beforeend", '<span class="badge ' + BADGE[name] + '">' + name + " ×" + dist2[name] + "</span>");
+      });
+      head.appendChild(dt);
+      head.addEventListener("click", function (ev) {
+        if (ev.target.closest(".mm-caret")) return;
+        toggle(cid);
+      });
+      card.appendChild(head);
+      if (chOpen) {
+        var box = document.createElement("div");
+        box.className = "mm-children";
+        (ch.c || []).forEach(function (sec, j) {
+          var sid = cid + "s" + j;
+          if (filtering() && !matchSub(sec)) return;
+          var secOpen = isOpen(sid);
+          var div = document.createElement("div");
+          div.className = "mm-sec";
+          var sh = document.createElement("div");
+          sh.className = "mm-sec-head";
+          var sc = document.createElement("button");
+          sc.type = "button"; sc.className = "mm-caret";
+          sc.setAttribute("aria-expanded", secOpen ? "true" : "false");
+          sc.setAttribute("aria-label", (secOpen ? "折叠 " : "展开 ") + sec.n);
+          sc.addEventListener("click", function (ev) { ev.stopPropagation(); toggle(sid); });
+          sh.appendChild(sc);
+          var sno = splitNo(sec.n);
+          var schip = document.createElement("span");
+          schip.className = "mm-sec-no";
+          schip.textContent = sno[0];
+          sh.appendChild(schip);
+          var b = document.createElement("b");
+          b.textContent = sno[1];
+          sh.appendChild(b);
+          var sk = (i + 1) + "." + (j + 1);
+          if (SEC_Q[sk]) {
+            var qchip = document.createElement("span");
+            qchip.className = "mm-sec-q";
+            qchip.textContent = "📝 押题 " + SEC_Q[sk] + " 题";
+            sh.appendChild(qchip);
+          }
+          sh.addEventListener("click", function (ev) {
+            if (ev.target.closest(".mm-caret")) return;
+            toggle(sid);
+          });
+          div.appendChild(sh);
+          if (secOpen) {
+            var ul = document.createElement("ul");
+            ul.className = "mm-list";
+            var pts = 0;
+            (sec.c || []).forEach(function (p, k) {
+              var pid = sid + "p" + k;
+              if (filtering() && !matchSub(p)) return;
+              pts++; shown++;
+              ul.appendChild(ptNode(p, pid, 2));
+            });
+            if (pts) div.appendChild(ul);
+          }
+          box.appendChild(div);
+        });
+        card.appendChild(box);
+      }
+      tree.appendChild(card);
+    }
+    var total = 0;
+    (ch.c || []).forEach(function (sec) { (sec.c || []).forEach(function (p) { if (!filtering() || matchSub(p)) total++; }); });
+    countEl.textContent = filtering() ? ("本章命中 " + total + " 考点") : ("本章 " + (ch.c || []).reduce(function (a, s) { return a + (s.c || []).length; }, 0) + " 考点");
+    // 跨章命中提示
+    var jump = crumbsEl.querySelector(".mm-jump");
+    if (jump) jump.remove();
+    if (filtering()) {
+      var best = null;
+      MM_DATA.forEach(function (och, oi) {
+        if (oi === curCi) return;
+        var c = 0;
+        (och.c || []).forEach(function (sec) { (sec.c || []).forEach(function (p) { if (matchSub(p)) c++; }); });
+        if (c > 0 && (!best || c > best.n)) best = { i: oi, n: c };
+      });
+      if (best) {
+        var a = document.createElement("a");
+        a.className = "mm-jump";
+        a.href = "#c" + best.i;
+        a.textContent = "其他章节还有 " + best.n + " 处命中 →";
+        crumbsEl.appendChild(a);
+      }
+    }
+  }
+
+  /* ================= 总览页 ================= */
+  function renderOverview() {
+    var grid = document.getElementById("ovGrid");
+    grid.innerHTML = "";
+    MM_DATA.forEach(function (ch, i) {
+      var cno = splitNo(ch.n);
+      var pts = 0;
+      (ch.c || []).forEach(function (sec) { pts += (sec.c || []).length; });
+      var secs = (ch.c || []).map(function (s) { return splitNo(s.n)[1]; }).join(" · ");
+      var d = tagDist(ch);
+      var a = document.createElement("a");
+      a.className = "ov-card";
+      a.href = "#c" + i;
+      a.style.setProperty("--cc", COLORS[i % COLORS.length]);
+      var tags = ["单选", "填空", "简答", "综合"].filter(function (t) { return d[t]; })
+        .map(function (t) { return '<span class="badge ' + BADGE[t] + '">' + t + " ×" + d[t] + "</span>"; }).join("");
+      a.innerHTML = '<span class="ov-no">' + cno[0] + "</span>"
+        + "<h2>" + cno[1] + "</h2>"
+        + '<div class="ov-stats">' + (ch.c || []).length + " 节 · " + pts + " 考点 · 押题 " + (CH_Q[i] || 0) + " 题</div>"
+        + '<p class="ov-secs">' + secs + "</p>"
+        + '<div class="ov-tags">' + tags + "</div>";
+      grid.appendChild(a);
+    });
+  }
+
+  /* ================= 章导航 ================= */
+  function buildNav() {
+    navEl.innerHTML = "";
+    var ov = document.createElement("a");
+    ov.href = "#";
+    ov.className = "mm-navchip";
+    ov.textContent = "🏠 总览";
+    navEl.appendChild(ov);
+    MM_DATA.forEach(function (ch, i) {
+      var a = document.createElement("a");
+      a.href = "#c" + i;
+      a.className = "mm-navchip";
+      a.style.setProperty("--cc", COLORS[i % COLORS.length]);
+      a.textContent = (i + 1);
+      a.setAttribute("aria-label", ch.n);
+      navEl.appendChild(a);
+    });
+  }
+
+  /* ================= 控件 ================= */
+  function chapterFullIds(ci) {
+    var s = [];
+    var ch = MM_DATA[ci], cid = "c" + ci;
+    s.push(cid);
+    (ch.c || []).forEach(function (sec, j) {
+      var sid = cid + "s" + j; s.push(sid);
+      (sec.c || []).forEach(function (p, k) {
+        var pid = sid + "p" + k; s.push(pid);
+        (p.c || []).forEach(function (_, m) { s.push(pid + "d" + m); });
+      });
+    });
+    return s;
+  }
+  document.getElementById("expandAll").addEventListener("click", function () {
+    if (curCi < 0) return;
+    chapterFullIds(curCi).forEach(function (id) { exp[id] = true; gexp[id] = true; });
+    persist(); renderGraph(); renderList();
+  });
+  document.getElementById("collapseAll").addEventListener("click", function () {
+    if (curCi < 0) return;
+    var cid = "c" + curCi;
+    chapterFullIds(curCi).forEach(function (id) { delete exp[id]; delete gexp[id]; });
+    exp[cid] = true; gexp[cid] = true;
+    (MM_DATA[curCi].c || []).forEach(function (_, j) { exp[cid + "s" + j] = true; });
+    persist(); renderGraph(); renderList();
+  });
+  document.getElementById("typeChips").addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".chip");
+    if (!btn) return;
+    typeState = btn.getAttribute("data-type");
+    this.querySelectorAll(".chip").forEach(function (c) { c.classList.toggle("active", c === btn); });
+    if (curCi >= 0) { renderGraph(); renderList(); }
+  });
+  var timer = null;
+  searchEl.addEventListener("input", function () {
+    clearTimeout(timer);
+    var v = this.value.trim().toLowerCase();
+    timer = setTimeout(function () {
+      query = v;
+      if (curCi >= 0) { renderGraph(); renderList(); }
+    }, 150);
+  });
+
+  var tabGraph = document.getElementById("tabGraph"), tabList = document.getElementById("tabList");
+  var graphView = document.getElementById("graphView"), listView = document.getElementById("listView");
+  function setTab(graph) {
+    curTab = graph ? "graph" : "list";
+    tabGraph.classList.toggle("active", graph);
+    tabList.classList.toggle("active", !graph);
+    tabGraph.setAttribute("aria-selected", graph ? "true" : "false");
+    tabList.setAttribute("aria-selected", graph ? "false" : "true");
+    graphView.hidden = !graph;
+    listView.hidden = !!graph;
+    if (graph) fitGraph();
+  }
+  tabGraph.addEventListener("click", function () { setTab(true); });
+  tabList.addEventListener("click", function () { setTab(false); });
+  window.addEventListener("resize", function () { if (curCi >= 0 && curTab === "graph") renderGraph(); });
+
+  /* ================= 路由与主渲染 ================= */
+  function route() {
+    var m = (location.hash || "").match(/^#c([0-7])$/);
+    return m ? +m[1] : -1;
+  }
+  function renderAll() {
+    var ci = route();
+    if (ci === curCi) { if (ci >= 0) { renderGraph(); renderList(); } return; }
+    curCi = ci;
+    if (ci < 0) {
+      overviewApp.hidden = false;
+      chapterApp.hidden = true;
+      renderOverview();
+      window.scrollTo(0, 0);
+      return;
+    }
+    overviewApp.hidden = true;
+    chapterApp.hidden = false;
+    var ch = MM_DATA[ci];
+    var cno = splitNo(ch.n);
+    crumbsEl.innerHTML = '<a href="#">🏠 总览</a> › <b style="color:' + COLORS[ci % COLORS.length] + '">' + ch.n + "</b>";
+    // 上/下一章
+    var prev = document.getElementById("navPrev"), next = document.getElementById("navNext");
+    if (ci > 0) { prev.hidden = false; prev.href = "#c" + (ci - 1); prev.textContent = "← " + splitNo(MM_DATA[ci - 1].n)[1]; }
+    else prev.hidden = true;
+    if (ci < MM_DATA.length - 1) { next.hidden = false; next.href = "#c" + (ci + 1); next.textContent = splitNo(MM_DATA[ci + 1].n)[1] + " →"; }
+    else next.hidden = true;
+    navEl.querySelectorAll("a").forEach(function (a) {
+      a.classList.toggle("on", a.getAttribute("href") === "#c" + ci);
+    });
+    renderGraph();
+    renderList();
+    setTab(curTab === "graph");
+    window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", renderAll);
+
+  buildNav();
+  renderAll();
+})();
+</script>
+<script src="subject-switch.js"></script>
+</body>
+</html>

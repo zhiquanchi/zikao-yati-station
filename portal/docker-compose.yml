@@ -1,0 +1,33 @@
+# 服务器运行编排（/opt/exam-sites/docker-compose.yml）：镜像均由本机 deploy.sh 预载，这里不 build。
+# 访问：http://<服务器IP>/os/ 与 /net/ ；停止：docker compose down
+name: exam-sites
+services:
+  portal:
+    image: exam-portal:latest
+    ports:
+      - "127.0.0.1:8799:80" # 服务器 80 已被宿主 nginx 占用：门户只绑本机回环，由 nginx 按 Host=IP 转发 /os/ /net/
+    environment:
+      GRADE_OS: http://grade-svc-os:8792/api/grade
+      GRADE_NET: http://grade-svc-net:8792/api/grade
+    volumes:
+      - portal-store:/data # 云同步 SQLite 落盘：服务器 docker 为 snap 版，守护进程看不到宿主 /opt，bind mount 必失败，故用命名卷（存于 /var/snap/docker 下，重部署与 compose down 均不删）
+    user: root # snap 命名卷属主为 root：以 root 跑门户以便写 /data/sync.db（容器内其余进程不受影响）
+    depends_on:
+      - grade-svc-os
+      - grade-svc-net
+    restart: unless-stopped
+  grade-svc-os:
+    image: exam-grade-os:latest
+    environment:
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3.8-flash}
+    # 有意不做端口映射：密钥与判分服务只在 compose 内部网络可达
+    restart: unless-stopped
+  grade-svc-net:
+    image: exam-grade-net:latest
+    environment:
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3.8-flash}
+    restart: unless-stopped
+volumes:
+  portal-store: # 命名卷由 docker 自管（snap docker 沙箱不允许 bind 宿主 /opt），数据存 /var/snap/docker/common/var-lib-docker/volumes；清理需显式 docker volume rm

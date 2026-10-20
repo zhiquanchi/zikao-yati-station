@@ -1,0 +1,15 @@
+{
+  "prefix": "os",
+  "code": "13180",
+  "name": "操作系统",
+  "examMonth": "2026年10月",
+  "title": "13180 操作系统 · 押题练习",
+  "pageTitle": "2026年10月自考 13180 操作系统 · 押题练习",
+  "switchLabel": "操作系统 13180",
+  "storageKey": "os13180.v1",
+  "ports": { "web": 8791, "grade": 8792 },
+  "flags": { "explain": true },
+  "paper": { "target": 100, "scores": { "single": 1, "blank": 2, "essay": 5 } },
+  "mindmap": { "enabled": true, "file": "操作系统考点串讲-思维导图.md", "label": "🗺 考点思维导图（串讲 8 章全览）" },
+  "grade": { "materialTitle": "操作系统考点串讲" }
+}

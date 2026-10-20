@@ -1,0 +1,90 @@
+// 13180 简答题 AI 判分服务（Go + OpenAI Go SDK · 千问兼容模式 · qwen3.8-flash）。
+// 默认只绑 127.0.0.1（GRADE_HOST 可改，供容器内使用）；密钥仅存在于本进程环境，前端经 server.js 的 /api/grade 同源代理访问。
+// 启动：export QWEN_API_KEY=sk-xxx && go run .（可选 QWEN_MODEL / QWEN_BASE_URL / GRADE_PORT / GRADE_HOST）
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"time"
+)
+
+// explainBudget 按任务类型给整体超时：逐项解析最多两级上游调用，预算更长。
+func explainBudget(task string) time.Duration {
+	if task == "explain" {
+		return 85 * time.Second
+	}
+	return 70 * time.Second
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, code, detail string) {
+	writeJSON(w, status, map[string]string{"error": code, "detail": detail})
+}
+
+// newMux 独立出来以便单测用 httptest 挂载同一套路由。
+func newMux(g *grader) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"ok": true, "model": g.model, "has_key": g.apiKey != ""})
+	})
+	mux.HandleFunc("POST /api/grade", func(w http.ResponseWriter, r *http.Request) {
+		if g.apiKey == "" {
+			writeErr(w, 501, "no_key", "未设置 QWEN_API_KEY 环境变量")
+			return
+		}
+		var req GradeReq
+		body := io.LimitReader(r.Body, 64<<10)
+		if err := json.NewDecoder(body).Decode(&req); err != nil {
+			writeErr(w, 400, "bad_request", "请求体不是合法 JSON")
+			return
+		}
+		// 单选逐项解析最多两级上游调用（资料级 + 联网级），整体预算放宽到 85s
+		ctx, cancel := context.WithTimeout(r.Context(), explainBudget(req.Task))
+		defer cancel()
+		var res any
+		var err error
+		if req.Task == "explain" {
+			res, err = g.Explain(ctx, req)
+		} else {
+			res, err = g.Grade(ctx, req)
+		}
+		if err != nil {
+			var se *svcErr
+			if errors.As(err, &se) {
+				writeErr(w, se.Status, se.Code, se.Detail)
+				return
+			}
+			writeErr(w, 500, "internal", err.Error())
+			return
+		}
+		writeJSON(w, 200, res)
+	})
+	return mux
+}
+
+func main() {
+	g := newGrader(os.Getenv("QWEN_API_KEY"), os.Getenv("QWEN_BASE_URL"), os.Getenv("QWEN_MODEL"))
+	port := os.Getenv("GRADE_PORT")
+	if port == "" {
+		port = "8792"
+	}
+	host := os.Getenv("GRADE_HOST")
+	if host == "" {
+		host = "127.0.0.1" // 主机直跑仅本机可达；容器内设 0.0.0.0，由编排网络隔离、不映射到宿主机
+	}
+	addr := host + ":" + port
+	srv := &http.Server{Addr: addr, Handler: newMux(g), ReadHeaderTimeout: 5 * time.Second}
+	log.Printf("🤖 13180 简答 AI 判分服务已启动 http://%s/api/grade（model=%s, key=%v）", addr, g.model, g.apiKey != "")
+	log.Fatal(srv.ListenAndServe())
+}

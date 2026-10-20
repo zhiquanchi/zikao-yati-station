@@ -1,0 +1,5 @@
+{
+  "_说明": "并列枚举、顺序可互换题清单（口径与 13180 站一致，见其 data/unordered.json）。ids＝多空填空题 id：build 标记 unordered:true，判分引擎（grading.js gradeBlanks）对标记题做跨空最大匹配，各空仍须逐字一致、只放开空位互换。single＝单空题但答案是「A或B」「A和B」式两项枚举的 id：build 用 orderVariants 追加认可写法（或选：每项单独即对；和选：互换顺序即对）。本库 70 道填空目前全部单空，故 ids 为空；扩充题库出现并列多空题时逐题复核后加入。有先后/语境锚定的题严禁加入。",
+  "ids": [],
+  "single": [222]
+}

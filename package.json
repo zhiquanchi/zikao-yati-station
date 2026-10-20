@@ -1,0 +1,14 @@
+{
+  "name": "zikao-exam-sites",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "全国自考押题多科目刷题站（单仓：共享引擎 web/grade-svc/portal + subjects/<科目> 目录，Bun 运行时）",
+  "scripts": {
+    "start": "bun server.js",
+    "build": "bun scripts/build.js",
+    "stage": "bun scripts/stage.js",
+    "test": "bun test",
+    "new-subject": "bun scripts/new-subject.js"
+  }
+}

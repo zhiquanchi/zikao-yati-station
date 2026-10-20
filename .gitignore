@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+*.log
+build/
+.env
+grade-svc/grade-svc
+portal/test/.fixtures/*.db
+portal/test/.fixtures/*.db-shm
+portal/test/.fixtures/*.db-wal
