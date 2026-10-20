@@ -3,15 +3,15 @@
 // 源文件格式：题目区（1..231 连续编号，单选带 A、B、C、D 选项）＋ 答案区（“N.答案…”连续编号），
 // 两区编号各自从 1 开始、按序扫描切分；答案空缺或题图/计算类题目直接剔除，不入库。
 // 科目身份（标题/存储键/组卷参数/特性开关）来自 ../subject.json，统一注入 QUIZ_DATA.meta。
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+// 装配段（并列互换、精简考点、解析覆盖、落盘）走共享层 scripts/build-lib.js；本文件只保留 04751 版式专属的解析。
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { metaOf } from "../../../scripts/config.js";
+import { fullRef, variantsOf, splitBlanks, applyUnordered, applyEssayPoints, applyExplains, writeArtifacts } from "../../../scripts/build-lib.js";
 
 const HERE = import.meta.dir;
 const SUBJECT = JSON.parse(readFileSync(path.join(HERE, "..", "subject.json"), "utf8"));
 const RAW = path.join(HERE, "raw.txt");
-const OUT_JS = path.join(HERE, "..", "data.js");
-const OUT_JSON = path.join(HERE, "questions.json");
 const EXPL_PATH = path.join(HERE, "explanations.json");
 const ESSP_PATH = path.join(HERE, "essay_points.json");
 const UNORD_PATH = path.join(HERE, "unordered.json");
@@ -21,9 +21,9 @@ const SINGLE_MAX = 105; // 原题号 ≤105 为单选
 // 剔除：计算/题图依赖且答案缺失或仅复述题干的题目（112/117/144/176/223），其余空答案题目自动剔除
 const EXCLUDED = new Set([112, 117, 144, 176, 223]);
 
-function fullRef(s) {
-  return String(s || "").trim().replace(/[。；;，,、\s]+$/g, "");
-}
+// 04751 版式：括号内「或」写法先规范成普通括号，再交给共享 variantsOf 拆变体
+const VAR_OPTS = { orParen: true };
+const variants = (t) => variantsOf(t, VAR_OPTS);
 
 // 去掉 OCR 造成的中文间空格与重复标点（不清理行尾数字：存在 “1000” 等纯数字答案）
 function clean(s) {
@@ -38,71 +38,9 @@ function clean(s) {
   return s.trim();
 }
 
-// 过滤括号拆解产生的无意义短词：纯中文要求≥3字，含ASCII要求≥2字符
-function useful(v) {
-  v = String(v).trim();
-  if (!v) return false;
-  if (/[一-鿿]/.test(v) && !/[A-Za-z0-9]/.test(v)) return v.length >= 3;
-  return v.length >= 2;
-}
-
-// 一个填空答案的可接受写法集合：去括号本体、括号内各项、拼接形式
-function variantsOf(term) {
-  term = fullRef(term).replace(/^[。；;，,、\s]+/g, "");
-  // “访问控制列表（或ACL）”→“访问控制列表（ACL）”，让括号内可拆出干净变体
-  term = term.replace(/[（(]\s*或\s*/g, "（");
-  const vs = [term];
-  const m = term.match(/^(.*?)[（(](.*?)[）)](.*)$/);
-  if (m) {
-    const [, head, inner, tail] = m;
-    const joined = head + tail;
-    if (joined) vs.push(joined);
-    for (let cand of [head, tail, ...inner.split(/[，,、;；]/)]) {
-      cand = String(cand).trim();
-      if (((cand.match(/[（(]/g) || []).length) !== ((cand.match(/[）)]/g) || []).length)) {
-        cand = cand.replace(/[（()）]/g, "");
-      }
-      if (useful(cand)) vs.push(cand);
-    }
-  }
-  for (const v of [...vs]) {
-    const nv = v.replace(/\s+/g, " ").trim();
-    if (nv !== v && nv) vs.push(nv);
-  }
-  const seen = new Set();
-  const out = [];
-  for (const v of vs) if (v && !seen.has(v)) { seen.add(v); out.push(v); }
-  return out;
-}
-
-// 单空并列/或选答案的额外认可写法（仅对 unordered.json single 清单里的题应用）：
-// 「A或B」＝二者任选其一即对 → 每项单独成为变体；「A和/与/及/、/，B」＝两项都要、顺序自由 → 互换写法成为变体
-function orderVariants(variants) {
-  const base = variants[0] || "";
-  const m = base.match(/^(.+?)(或|和|与|及|、|，)(.+)$/);
-  if (!m || (m[1] + m[3]).match(/[或和与及、，]/)) return variants; // 只处理恰好一个分隔符的两项枚举
-  const a = m[1].trim(), d = m[2], b = m[3].trim();
-  const extra = d === "或" ? [a, b] : [b + d + a];
-  const out = [...variants];
-  for (const v of extra) if (useful(v) && !out.includes(v)) out.push(v);
-  return out;
-}
-
-// 按空的个数把参考答案拆成每空的候选词列表。拆不动时返回 null（整句匹配兜底）
-function splitBlanks(ref, n) {
-  ref = fullRef(ref);
-  const delims = [/、/, /[，,]/, /[；;]/, /\s+/, /[和与及]/];
-  for (const d of delims) {
-    let parts = ref.split(d).map((p) => p.trim()).filter(Boolean);
-    parts = parts.map((p) => p.replace(/[。；;，,、\s]+$/g, ""));
-    if (parts.length === n && parts.every((p) => p.length <= 40)) return parts;
-  }
-  return null;
-}
-
 const stripPunct = (s) => String(s).trim().replace(/^[ ；;，,。：:]+/, "").replace(/[ ；;，,。：:]+$/, "");
 
-// 把简答参考答案拆成得分点。优先按序号标记切，其次按句读切
+// 把简答参考答案拆成得分点（04751 版式：全/半角分值混排、答区复述、圈号归类等处理）
 function splitPoints(ref) {
   ref = fullRef(ref).replace(/^答[：:]\s*/, "").replace(/^要求[：:][\s\S]*?(?=（?1[）)])/, "");
   // 分值标注（全/半角混排的“（2分)”）统一成句号分隔，再参与拆分
@@ -224,10 +162,10 @@ function parse(text) {
       const n = (stem.match(/_{2,}/g) || []).length;
       const ref = fullRef(clean(ans));
       let blanks;
-      if (n === 1) blanks = [variantsOf(ref)];
+      if (n === 1) blanks = [variants(ref)];
       else {
         const parts = splitBlanks(ref, n);
-        blanks = parts ? parts.map(variantsOf) : null;
+        blanks = parts ? parts.map(variants) : null;
       }
       const fallback = blanks == null;
       if (fallback) blanks = Array.from({ length: n }, () => [ref]);
@@ -263,6 +201,7 @@ function main() {
   const text = readFileSync(RAW, "utf8");
   const expl = existsSync(EXPL_PATH) ? JSON.parse(readFileSync(EXPL_PATH, "utf8")) : {};
   const essayPts = existsSync(ESSP_PATH) ? JSON.parse(readFileSync(ESSP_PATH, "utf8")) : {};
+  const unord = existsSync(UNORD_PATH) ? JSON.parse(readFileSync(UNORD_PATH, "utf8")) : null;
   const { questions, warnings } = parse(text);
   // 特例修正：#76 源文本选项与答案串行错乱（OCR），按标准结论修正为 n(n-1)/2
   const q76 = questions.find((q) => q.id === 76);
@@ -290,55 +229,17 @@ function main() {
   if (q164 && q164.type === "essay") {
     q164.points = ["生存技术：①②⑨⑩", "攻击技术：③④⑥⑧", "隐藏技术：⑤⑦"];
   }
-  // 并列可互换题标记（data/unordered.json）：ids＝多空题打 unordered:true，判分引擎据此做跨空排列匹配；
-  // single＝单空题但答案本身是并列/或选枚举，用 orderVariants 追加认可写法（互换/单项），不动判分引擎
-  const unord = existsSync(UNORD_PATH) ? JSON.parse(readFileSync(UNORD_PATH, "utf8")) : null;
-  if (unord) {
-    const ids = new Set((unord.ids || []).map(Number));
-    const singles = new Set((unord.single || []).map(Number));
-    const seen = new Set();
-    for (const q of questions) {
-      if (singles.has(q.id)) {
-        seen.add(q.id);
-        if (q.type !== "blank" || q.blanks.length !== 1) {
-          warnings.push(`#${q.id} unordered.single 无效（非单空填空题），已忽略`);
-          continue;
-        }
-        q.blanks[0] = orderVariants(q.blanks[0]);
-        continue;
-      }
-      if (!ids.has(q.id)) continue;
-      seen.add(q.id);
-      if (q.type !== "blank" || q.blankCount < 2 || q.fallback) {
-        warnings.push(`#${q.id} unordered 标记无效（非多空填空题），已忽略`);
-        continue;
-      }
-      q.unordered = true;
-    }
-    for (const id of new Set([...ids, ...singles])) if (!seen.has(id)) warnings.push(`unordered.json 中 #${id} 在题库中不存在`);
-  }
-  // 可选人工覆盖：简答精简考点（**关键词** 加粗约定同 13180 站）与主观题解析
-  for (const q of questions) {
-    if (q.type === "essay") {
-      const simp = essayPts[String(q.id)];
-      if (Array.isArray(simp) && simp.length) {
-        const md = simp.map((p) => String(p).trim());
-        q.points = md.map((p) => p.replace(/\*\*/g, ""));
-        if (md.some((p) => p.includes("**"))) q.pointsMd = md;
-      }
-    }
-    // 单选解析沿用原文；主观题无手写解析时留空，前端回落展示参考答案
-    if (expl[String(q.id)]) q.explain = expl[String(q.id)];
-    else if (q.type === "single") q.explain = q.explanation;
-  }
+  applyUnordered(questions, unord, warnings);
+  // 可选人工覆盖：简答精简考点（**关键词** 加粗约定同 os13180）与主观题解析（本库暂无手写解析，缺省不告警）
+  applyEssayPoints(questions, essayPts, warnings);
+  applyExplains(questions, expl, warnings);
   const cnt = { single: 0, blank: 0, essay: 0 };
   questions.forEach((q) => cnt[q.type]++);
   console.log("题目:", questions.length, cnt);
   console.log("剔除:", warnings.length ? warnings.join("；") : "无");
   const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters: [CHAPTER], questions };
-  writeFileSync(OUT_JSON, JSON.stringify(payload, null, 1), "utf8");
-  writeFileSync(OUT_JS, "// 由 data/build_data.js 自动生成，请勿手改\nwindow.QUIZ_DATA = " + JSON.stringify(payload) + ";\n", "utf8");
-  console.log("已生成:", path.resolve(OUT_JS), path.resolve(OUT_JSON));
+  const { outJs, outJson } = writeArtifacts(path.join(HERE, ".."), payload);
+  console.log("已生成:", outJs, outJson);
 }
 
 main();
