@@ -34,7 +34,15 @@ async function proxy(req, target, timeoutMs, allowMethods) {
       body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return new Response(await up.text(), { status: up.status, headers: { "content-type": "application/json" } });
+    const ct = up.headers.get("content-type") || "application/json";
+    if (ct.includes("text/event-stream")) {
+      // 逐项解析流式应答：body 直接转发不聚合（X-Accel-Buffering 一并透传，供链路上 nginx 关缓冲）
+      return new Response(up.body, {
+        status: up.status,
+        headers: { "content-type": ct, "cache-control": "no-cache", "x-accel-buffering": "no" },
+      });
+    }
+    return new Response(await up.text(), { status: up.status, headers: { "content-type": ct } });
   } catch (e) {
     return new Response(JSON.stringify({ error: "svc_down", detail: String((e && e.message) || e) }), {
       status: 502, headers: { "content-type": "application/json" },

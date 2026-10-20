@@ -36,8 +36,20 @@ beforeAll(async () => {
   fake = Bun.serve({
     hostname: "127.0.0.1",
     port: FAKE_PORT,
-    fetch(req) {
+    async fetch(req) {
       if (req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        if (b.task === "explain" && b.stream) {
+          // 假逐项解析流式上游：delta×2 + done（Go 端帧格式），验证代理聚合不破坏透传
+          const s = new ReadableStream({
+            start(c) {
+              c.enqueue('event: delta\ndata: {"key":"A","text":"并发"}\n\n');
+              c.enqueue('event: done\ndata: {"engine":"ai","task":"explain","source":"material","items":[{"key":"A","correct":true,"why":"并发","src":"ref"}]}\n\n');
+              c.close();
+            },
+          });
+          return new Response(s, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "x-accel-buffering": "no" } });
+        }
         return Response.json({ engine: "ai", score: 88, cached: false, per: [{ text: "x", cov: 0.88, state: "hit", comment: "点评", segs: [] }] });
       }
       return Response.json({ ok: true });
@@ -80,6 +92,21 @@ describe("/api/grade 代理", () => {
     const data = await r.json();
     expect(data.engine).toBe("ai");
     expect(data.score).toBe(88);
+  });
+
+  it("SSE 流式应答原样透传（逐项解析 stream:true 链路）", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/api/grade`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: "explain", stream: true, stem: "题干", options: [{ key: "A", text: "并发" }], answer: "A" }),
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("text/event-stream");
+    expect(r.headers.get("x-accel-buffering")).toBe("no"); // nginx 关缓冲依赖该头逐跳透传
+    const text = await r.text();
+    expect(text).toContain("event: delta");
+    expect(text).toContain("event: done");
+    expect(text).toContain("并发");
   });
 
   it("上游不可达时返回 502 svc_down（前端据此降级本机估分）", async () => {

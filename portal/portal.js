@@ -45,7 +45,15 @@ const server = Bun.serve({
           body: await req.text(),
           signal: AbortSignal.timeout(95000),
         });
-        return new Response(await up_.text(), { status: up_.status, headers: { "content-type": "application/json" } });
+        const ct = up_.headers.get("content-type") || "application/json";
+        if (ct.includes("text/event-stream")) {
+          // 逐项解析流式应答：body 直接转发不聚合（X-Accel-Buffering 一并透传，nginx 默认尊重该头关缓冲）
+          return new Response(up_.body, {
+            status: up_.status,
+            headers: { "content-type": ct, "cache-control": "no-cache", "x-accel-buffering": "no" },
+          });
+        }
+        return new Response(await up_.text(), { status: up_.status, headers: { "content-type": ct } });
       } catch (e) {
         return new Response(JSON.stringify({ error: "svc_down", detail: String((e && e.message) || e) }), {
           status: 502, headers: { "content-type": "application/json" },

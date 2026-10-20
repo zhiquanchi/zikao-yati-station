@@ -28,6 +28,7 @@ const (
 
 // GradeReq 是前端 POST /api/grade 的请求体（分点作答由前端拼成带编号的多行文本）。
 // Task 为空走简判判分；"explain" 时复用同一端点做单选逐项解析（explain.go），Options 携带选项。
+// Stream=true 且 Task="explain" 时以 SSE 流式应答（explain_stream.go），其余请求保持整包 JSON。
 type GradeReq struct {
 	Stem    string   `json:"stem"`
 	Ref     string   `json:"ref"`
@@ -35,6 +36,7 @@ type GradeReq struct {
 	Answer  string   `json:"answer"`
 	Task    string   `json:"task,omitempty"`
 	Options []Opt    `json:"options,omitempty"`
+	Stream  bool     `json:"stream,omitempty"`
 }
 
 // PerPoint 与 grading.js gradeEssay 返回的 per 元素形状兼容（segs 置空，另附 comment 点评）。

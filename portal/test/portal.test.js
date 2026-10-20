@@ -32,7 +32,24 @@ async function waitUp(url, tries = 60) {
 }
 
 beforeAll(async () => {
-  fakeLive = Bun.serve({ hostname: "127.0.0.1", port: FAKE_LIVE, fetch: () => Response.json({ engine: "ai", subject: "live", score: 88, per: [] }) });
+  fakeLive = Bun.serve({
+    hostname: "127.0.0.1", port: FAKE_LIVE,
+    async fetch(req) {
+      const b = await req.json().catch(() => ({}));
+      if (b.task === "explain" && b.stream) {
+        // 假逐项解析流式上游（Go 帧格式）：验证门户代理逐帧透传不聚合
+        const s = new ReadableStream({
+          start(c) {
+            c.enqueue('event: delta\ndata: {"key":"A","text":"并发"}\n\n');
+            c.enqueue('event: done\ndata: {"engine":"ai","task":"explain","source":"material","items":[{"key":"A","correct":true,"why":"并发","src":"ref"}]}\n\n');
+            c.close();
+          },
+        });
+        return new Response(s, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "x-accel-buffering": "no" } });
+      }
+      return Response.json({ engine: "ai", subject: "live", score: 88, per: [] });
+    },
+  });
   const env = { ...process.env, PORT: String(PORT) };
   prefixes.forEach((pre, i) => {
     env[up(pre) + "_ROOT"] = fixture(pre, pre.toUpperCase() + "-SITE");
@@ -76,6 +93,19 @@ describe("门户路由", () => {
       expect((await r.json()).error).toBe("svc_down");
     }
     expect((await fetch(`http://127.0.0.1:${PORT}/${live}/api/grade`)).status).toBe(405);
+  });
+  it("逐项解析 SSE 流式应答原样透传（含 X-Accel-Buffering 供 nginx 关缓冲）", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/${prefixes[0]}/api/grade`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: "explain", stream: true, stem: "题干", options: [{ key: "A", text: "并发" }], answer: "A" }),
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("text/event-stream");
+    expect(r.headers.get("x-accel-buffering")).toBe("no");
+    const text = await r.text();
+    expect(text).toContain("event: delta");
+    expect(text).toContain("event: done");
+    expect(text).toContain("并发");
   });
   it("目录穿越被拒（编码与点段都拦下，绝不逃逸科目根）", async () => {
     for (const pre of prefixes) {

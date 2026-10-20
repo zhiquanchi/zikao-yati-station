@@ -467,7 +467,7 @@
 
   // ——— 简答 AI 判分：经同源 /api/grade 调 Go 服务（grade-svc），不可用自动降级本机估分 ———
   let aiOff = false; // 会话级熔断：服务未启动 / 未配 Key / Key 无效时不再重复请求
-  const AI_CODES = { no_key: "未配置 QWEN_API_KEY", bad_key: "API Key 无效", svc_down: "判分服务未启动", timeout: "上游超时", parse: "上游输出解析失败", upstream: "上游服务错误", bad_request: "请求参数异常" };
+  const AI_CODES = { no_key: "未配置 QWEN_API_KEY", bad_key: "API Key 无效", svc_down: "判分服务未启动", timeout: "上游超时", parse: "上游输出解析失败", upstream: "上游服务错误", bad_request: "请求参数异常", internal: "服务内部错误" };
   function aiEnabled() { return !aiOff && location.protocol !== "file:"; }
   function liveCard(qid) { return document.querySelector(`.card[data-id="${qid}"]`); }
   function essayAnswerText(input) {
@@ -536,8 +536,9 @@
     });
   }
 
-  // ——— 单选逐项解析：同源 /api/grade 的 task:"explain"——LLM 先依《考点串讲》资料作答，
-  // 资料不足自动带 enable_search 联网补充；结果按题缓存于 localStorage（派生键，不入云同步、不升版） ———
+  // ——— 单选逐项解析：同源 /api/grade 的 task:"explain"（stream:true 走 SSE 流式）——LLM 先依《考点串讲》
+  // 资料作答，资料不足自动带 enable_search 联网补充；逐选项 delta 实时渲染，done 整包整形后落缓存。
+  // 应答为普通 JSON（旧网关/错误体）时回落整包口径；结果按题缓存于 localStorage（派生键，不入云同步、不升版） ———
   const EKEY = KEY + ".expl";
   let explCache = {};
   try { explCache = JSON.parse(localStorage.getItem(EKEY)) || {}; } catch (e) {}
@@ -545,29 +546,89 @@
     explCache[id] = v;
     try { localStorage.setItem(EKEY, JSON.stringify(explCache)); } catch (e) {}
   }
-  async function requestExplain(q) {
+  function explErr(msg, code) { const e = new Error(msg || "upstream"); e.code = code || msg || "upstream"; return e; }
+  function validExpl(data, q) { return data && Array.isArray(data.items) && data.items.length === q.options.length; }
+  async function requestExplain(q, onEvent) {
     const res = await fetch("api/grade", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task: "explain", stem: q.stem, options: q.options, answer: q.answer, ref: q.explain || q.ref || "" }),
+      body: JSON.stringify({ task: "explain", stream: true, stem: q.stem, options: q.options, answer: q.answer, ref: q.explain || q.ref || "" }),
       signal: AbortSignal.timeout(95000), // 两级上游调用（资料级+联网级），预算比判分长
     });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data || !Array.isArray(data.items) || data.items.length !== q.options.length) {
-      const e = new Error((data && data.error) || "upstream");
-      e.code = (data && data.error) || "upstream";
-      throw e;
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("text/event-stream")) { // 非流式应答兜底（未升级的旧服务等；错误体也走这里）
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !validExpl(data, q)) throw explErr(data && data.error, (data && data.error) || "upstream");
+      return data;
     }
+    const data = await readExplSSE(res.body, onEvent);
+    if (!validExpl(data, q)) throw explErr("parse");
     return data;
+  }
+  // readExplSSE：读 SSE 帧并分发 delta/reset 给 onEvent；done 整包 resolve、error 带 code reject。
+  // 流断（网络断开/超时 abort 后余帧）未等到 done → 按 upstream 失败处理。
+  function readExplSSE(body, onEvent) {
+    return new Promise((resolve, reject) => {
+      const reader = body.getReader(), dec = new TextDecoder();
+      let buf = "", settled = false;
+      const done = (fn) => (arg) => { if (!settled) { settled = true; fn(arg); } };
+      const ok = done(resolve), bad = done(reject);
+      (async () => {
+        while (!settled) {
+          const { value, done: end } = await reader.read();
+          if (end) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0 && !settled) {
+            const frame = buf.slice(0, i);
+            buf = buf.slice(i + 2);
+            let ev = "message", data = "";
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("event:")) ev = line.slice(6).trim();
+              else if (line.startsWith("data:")) data += line.slice(5).trim(); // Go 端 data 为单行 JSON
+            }
+            if (!data) continue;
+            let payload;
+            try { payload = JSON.parse(data); } catch (e) { continue; }
+            if (ev === "done") return ok(payload);
+            if (ev === "error") return bad(explErr(payload.error, payload.error));
+            onEvent(ev, payload);
+          }
+        }
+        if (!settled) bad(explErr("upstream"));
+      })().catch((e) => bad(e));
+    });
   }
   function renderOptExpl(body, data) {
     const chip = data.source === "material"
       ? '<span class="oe-src ref">📖 依据考点串讲资料</span>'
       : '<span class="oe-src search">🔍 联网搜索补充</span>';
+    delete body.dataset.live;
     body.innerHTML = `<div class="oe-head">逐项解析 ${chip}</div>` + data.items.map((it) =>
       `<div class="oe-row ${it.correct ? "ok" : "no"}"><span class="oe-key">${esc(it.key)}</span>` +
       `<span class="oe-tag">${it.correct ? "✓ 正确项" : "✗ 错误项"}</span><span class="oe-why">${esc(it.why)}</span></div>`).join("");
     body.classList.add("show");
+  }
+  // 流式渲染：delta 事件逐选项落行（行按到达序出现，done 整包整形后重排并标注对错）；
+  // reset ＝ 资料级输出被弃用转联网，清回生成头。dataset.live 同时驱动光标样式。
+  function startExplLive(body) {
+    body.dataset.live = "1";
+    body.innerHTML = '<div class="oe-head">🤖 逐项解析生成中…</div>';
+    body.classList.add("show");
+  }
+  function explLiveDelta(body, key, text) {
+    if (!body.dataset.live) startExplLive(body);
+    if (!text) return;
+    let row = key ? $(`.oe-row[data-k="${key}"]`, body) : null;
+    if (!row) {
+      row = document.createElement("div"); // 未知 key（罕见：模型乱序）：并入最后活跃行，done 会纠正
+      row.className = "oe-row";
+      if (key) { row.dataset.k = key; row.innerHTML = `<span class="oe-key">${esc(key)}</span>`; }
+      row.insertAdjacentHTML("beforeend", '<span class="oe-why"></span>');
+      body.appendChild(row);
+    }
+    const why = $(".oe-why", row);
+    why.textContent += text;
   }
   function wireOptExpl(q, btn, body) {
     const cached = explCache[q.id];
@@ -580,12 +641,17 @@
       btn.disabled = true;
       btn.textContent = "🤖 逐项解析生成中…（可能要联网）";
       try {
-        const data = await requestExplain(q);
+        const data = await requestExplain(q, (ev, p) => {
+          if (ev === "delta") explLiveDelta(body, p.key, p.text);
+          else if (ev === "reset") startExplLive(body);
+        });
         saveExplCache(q.id, data);
         renderOptExpl(body, data);
         btn.textContent = "🤖 重新逐项解析";
       } catch (e) {
         if (e.code === "svc_down" || e.code === "no_key" || e.code === "bad_key") aiOff = true; // 与简答判分共用熔断
+        if (cached && Array.isArray(cached.items)) renderOptExpl(body, cached); // 失败回滚到旧完整结果，不留半截
+        else if (body.dataset.live) { delete body.dataset.live; body.classList.remove("show"); body.innerHTML = ""; }
         btn.textContent = "🤖 逐项解析";
         toast("逐项解析失败：" + (AI_CODES[e.code] || e.code));
       } finally {

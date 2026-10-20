@@ -42,6 +42,7 @@
 - 链路：前端同源 POST → server.js（本地）或 portal.js（线上）代理 → 每科目一个 Go 容器（镜像 `exam-grade-<prefix>`，同一份源码 `--build-arg SUBJECT` 注入科目目录到镜像 `/app/subject/`）→ 千问兼容模式（默认 `qwen3.8-flash`）。密钥只走 `QWEN_API_KEY` 环境变量、只存在于 Go 进程；**严禁写进前端源码或 data 文件**。
 - **科目身份经 `SUBJECT_DIR` 注入**（subject.go：科目名/资料名 prompt、`reference.md`/`grade/reference.md` 可选参考资料）：未设或解析失败**拒启**，绝不拿错科目判分。判分口径三处同步约束：normalize 按 cov 推 state（hit≥0.5/part≥0.22，与 grading.js 同阈值）、score=cov 均值×100——改口径 grading.js 与 grader.go 两处同改（有测试锁）。
 - 响应契约与 gradeEssay 兼容：`{engine,score,per:[{text,cov,state,comment,segs}]}`；explain 任务 `{task:"explain",source,items:[{key,correct,why,src}]}`，correct 一律按题面答案推导。两级链路（资料级 found=false 或失败→enable_search 联网级；网关拒参自动去参重出）。超时预算：Go 85s、代理 95s、线上 nginx 120s。
+- **explain 流式输出**：请求体带 `stream:true` 时 Go 以 SSE 应答（`explain_stream.go`：事件 delta/reset/done/error；delta＝逐选项增量，reset＝资料级输出弃用清屏，done＝与非流式**完全同形**的 ExplainResp，权威整形只在末尾对全量 content 做一次）。响应带 `X-Accel-Buffering: no`（nginx 默认尊重该头关缓冲，无需改 location 配置）；server.js/portal.js 对 text/event-stream 逐帧透传不聚合。前端 app.js 实时落行渲染、done 后整包重排并落 `.expl` 缓存；应答非 SSE（旧服务/错误体）自动回落整包 JSON 口径。改流式扫描器必跑 `explain_stream_test.go`（任意切块/转义/乱序夹具断言）。
 - `subjects/<科目>/grade/reference.md` 更新后须与科目导图 md 逐字一致（`test/ref_sync.test.js` 值守卫）。
 
 ## 云同步（sync.js ↔ grade-svc/cmd/syncsvc · 多用户）

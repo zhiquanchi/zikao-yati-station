@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -54,6 +55,10 @@ func newMux(g *grader) *http.ServeMux {
 		// 单选逐项解析最多两级上游调用（资料级 + 联网级），整体预算放宽到 85s
 		ctx, cancel := context.WithTimeout(r.Context(), explainBudget(req.Task))
 		defer cancel()
+		if req.Task == "explain" && req.Stream {
+			streamExplain(w, g, ctx, req)
+			return
+		}
 		var res any
 		var err error
 		if req.Task == "explain" {
@@ -73,6 +78,45 @@ func newMux(g *grader) *http.ServeMux {
 		writeJSON(w, 200, res)
 	})
 	return mux
+}
+
+// streamExplain 以 SSE 应答逐项解析：事件 delta/reset/done/error（见 explain_stream.go）。
+// X-Accel-Buffering: no 让线上 nginx 对本响应关缓冲（默认尊重该头，无需改 location 配置）。
+// 流头一旦发出状态即 200，此后错误只能走 error 事件；校验类错误（400）也统一以事件表达，
+// 前端对 text/event-stream 与非流式 JSON 两种应答同码解析。
+func streamExplain(w http.ResponseWriter, g *grader, ctx context.Context, req GradeReq) {
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(200)
+	fl, _ := w.(http.Flusher)
+	emit := func(event string, data any) error {
+		b, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b); err != nil {
+			return explErrClient
+		}
+		if fl != nil {
+			fl.Flush()
+		}
+		return nil
+	}
+	resp, err := g.ExplainStream(ctx, req, emit)
+	if err != nil {
+		if errors.Is(err, explErrClient) {
+			return // 客户端已断开，无从再写
+		}
+		var se *svcErr
+		if errors.As(err, &se) {
+			_ = emit("error", map[string]string{"error": se.Code, "detail": se.Detail})
+		} else {
+			_ = emit("error", map[string]string{"error": "internal", "detail": err.Error()})
+		}
+		return
+	}
+	_ = emit("done", resp)
 }
 
 func main() {

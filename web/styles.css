@@ -233,6 +233,9 @@ textarea.ans:focus, .stem input.blank:focus, .pinput:focus, .toolbar :focus { ou
 .optexpl-btn:disabled { opacity: .6; cursor: default; }
 .optexpl-body { display: none; }
 .optexpl-body.show { display: block; }
+/* 流式生成中：末行尾闪烁光标（dataset.live 由 app.js 管理） */
+.optexpl-body[data-live] .oe-row:last-child .oe-why::after { content: "▍"; color: var(--accent); animation: oe-blink 1s steps(2, start) infinite; }
+@keyframes oe-blink { 50% { opacity: 0; } }
 .oe-head { font-size: 12.5px; color: var(--muted); margin: 8px 0 6px; }
 .oe-src { border-radius: 7px; padding: 1px 8px; font-weight: 700; }
 .oe-src.ref { background: var(--ok-soft); color: var(--ok); }
