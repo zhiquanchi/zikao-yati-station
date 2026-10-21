@@ -3,6 +3,7 @@ node_modules/
 *.log
 build/
 .env
+.deploy.env
 grade-svc/grade-svc
 portal/test/.fixtures/*.db
 portal/test/.fixtures/*.db-shm

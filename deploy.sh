@@ -6,7 +6,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SSH_HOST="${SSH_HOST:-<SSH_HOST见本地.deploy.env>}"
+# 服务器目标不进仓：仓库根未跟踪的 .deploy.env 提供 SSH_HOST（或同名环境变量），本仓公开可见
+if [ -f .deploy.env ]; then set -a; . ./.deploy.env; set +a; fi
+SSH_HOST="${SSH_HOST:?未配置 SSH_HOST：请在仓库根 .deploy.env（未跟踪）写入 SSH_HOST=<user@host>，或以环境变量传入}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/exam-sites}"
 
 # —— 0. 科目清单（唯一事实源 subjects/<科目>/subject.json，slug + 前缀 + 主科目）——

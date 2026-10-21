@@ -55,6 +55,7 @@
 
 ## 部署（deploy.sh，每次本地提交后必跑）
 
+- 服务器目标经 `SSH_HOST` 提供：deploy.sh 自动 source 仓库根未跟踪的 `.deploy.env`（已 gitignore，内含真实 host，勿提交、勿写进任何进仓文件），无则报错拒跑。
 - 遍历 `subjects/*/subject.json` 全自动：build+stage → 交叉构建 amd64 镜像（portal + sync-svc 云同步 + 每科目 grade）→ 管道上传 load → `gen-compose.js --remote` 生成的 compose rsync 起（门户绑 127.0.0.1:8799，云同步与科目服务不映射宿主端口，命名卷 portal-store 由 sync-svc 挂载）→ nginx Host=IP 逐科目前缀 location（超时 120s 统一口径）→ 逐科目探活（含 `/api/store` 链路与非法码 400）。**新增科目零改脚本**；compose/门户清单/nginx 均为生成物勿手改。发布后必须 curl 线上验证已生效。
 - 线上兼容基线：前缀 `/os/` `/net/`、各科 storageKey（裸键=旧版无码设备路径）、云端 `user=''` 旧槽与旧三仓主键一致，已存进度无缝续用，勿改；多用户码槽是纯增量，旧库迁移由 sync-svc 启动时幂等完成。
 
