@@ -1,11 +1,11 @@
 // 多用户身份（同步码）逻辑回归：码格式与签发、存储键分区派生、ensure 三分支（有码/旧版数据/全新访客）、
-// 迁移搬键完整性（六键全搬、旧分区清干净、可退回标记）。纯 localStorage 操作，用内存 stub 直测。
+// 迁移搬键完整性（七键全搬、旧分区清干净、可退回标记）。纯 localStorage 操作，用内存 stub 直测。
 import { describe, it, expect, beforeEach } from "bun:test";
 import "../web/identity.js";
 
 const ID = globalThis.IDENTITY;
 const RAW = "os13180.v1";
-const SUFFIXES = ["", ".shuffle", ".syncsnap", ".synccleared", ".hist", ".expl"];
+const SUFFIXES = ["", ".shuffle", ".syncsnap", ".synccleared", ".hist", ".expl", ".seen"];
 
 function storageStub(init = {}) {
   const m = new Map(Object.entries(init));
@@ -67,7 +67,7 @@ describe("同步码", () => {
 });
 
 describe("迁移搬键（旧版槽 → 同步码分区）", () => {
-  it("六键全搬、旧分区清空、身份切换、可退回标记", () => {
+  it("七键全搬、旧分区清空、身份切换、可退回标记", () => {
     const m = globalThis.localStorage._m;
     for (const suf of SUFFIXES) m.set(RAW + suf, "V" + suf);
     const code = ID.mint();

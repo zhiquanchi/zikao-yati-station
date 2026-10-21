@@ -49,17 +49,30 @@
     };
   }
   function typeWeight(t) { return t === "essay" ? 3 : t === "blank" ? 2 : 1; } // 简答>填空>单选
-  function statusWeight(q) {
-    const r = store[q.id];
-    if (r && r.v) return 8;       // 作答前点开过解析＝开卷：不论得分，一律计入「完全没掌握」最高频出现（重做此题可清零）
-    const s = r ? r.s : null;
-    if (s == null) return 4;      // 未做/未判分：更易出现
-    if (s < 60) return 4;         // 做错：更易出现
-    if (s >= 80) return 0.3;      // 已通过且未看过解析：降低推荐频率
-    return 1;                     // 60~79：正常
+  // ——— 出现标记：题卡在刷题/组卷模式下进过眼（滚入视口、进过卷面、有过任何作答记录）即算「出现过」。
+  // 本机派生键 `.seen`（只存本机、不入云同步——只影响抽题倾向，不影响数据正确性）。背答案模式滚过不算。———
+  const VKEY = KEY + ".seen";
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem(VKEY)) || {}; } catch (e) {}
+  function markSeen(id) {
+    if (seen[id]) return; // 每题只记首次
+    seen[id] = Date.now();
+    try { localStorage.setItem(VKEY, JSON.stringify(seen)); } catch (e) {}
   }
-  // 未判分的题点开解析：记录查看（v 字段），组卷时计入「完全没掌握」档
+  const hasSeen = (id) => !!seen[id] || store[id] != null; // store 有记录＝必然见过（老用户零迁移）
+  function statusWeight(q) {
+    if (!hasSeen(q.id)) return 8;   // 从未在刷题/组卷中出现过：最高权重
+    const r = store[q.id];
+    if (r && r.v) return 4;         // 点开过解析＝开卷混过（判分不洗白）：并入第二档
+    const s = r ? r.s : null;
+    if (s == null) return 4;        // 出现过但未作答：更易出现
+    if (s < 60) return 4;           // 做错：更易出现
+    if (s >= 80) return 0.3;        // 出现过且已通过、未看过解析：降低推荐频率
+    return 1;                       // 60~79：正常
+  }
+  // 未判分的题点开解析：记录查看（v 字段），组卷时计入第二档；同时补记出现过（防观察器时序漏标）
   function markViewed(q) {
+    markSeen(q.id);
     const r = store[q.id];
     if (r && (r.s != null || r.v)) return; // 已判分按分数定档；已标记过不重复写
     store[q.id] = { u: r ? r.u : null, s: null, ts: r && r.ts || Date.now(), v: Date.now() };
@@ -87,6 +100,7 @@
     }
     shuf = { seed, order, picked, total };
     localStorage.setItem(SKEY, JSON.stringify(shuf));
+    picked.forEach(markSeen); // 进过卷面＝出现过（下次组卷不再是「从未出现」档）
     // 组卷即全新：卷内题目旧作答记录一律清掉，再次刷题从全空白开始；判过分的先归档进本机历史（`.hist`）；
     // 保留「看过解析」v 标记供下次组卷加权。记录删除经 sync 墓碑同步云端（只增删键、不改记录形状）
     let reset = 0;
@@ -118,7 +132,7 @@
     el.innerHTML = `📋 随机组卷 <b>${shuf.picked.length}</b> 题 · 总分 <b>${shuf.total}</b> 分` +
       (inFilter ? `（组卷范围：当前筛选）` : "") +
       `（单选 ${cnt.single}×${SCORE.single} ＋ 填空 ${cnt.blank}×${SCORE.blank} ＋ 简答 ${cnt.essay}×${SCORE.essay}）` +
-      `<span class="pi-tip">点开过解析的最易入选（不论得分），未做/答错的次之，没看过解析且已通过的低频；点「🎲 换一批」按最新掌握情况重新组卷；筛选圈定抽题范围，组卷后状态筛选不再影响卷面（组卷即全新已清空卷内得分）</span>`;
+      `<span class="pi-tip">从没在刷题/组卷出现过的最易入选，看过解析/未做/答错的次之，出现过的已掌握题低频；点「🎲 换一批」按最新掌握情况重新组卷；筛选圈定抽题范围，组卷后状态筛选不再影响卷面（组卷即全新已清空卷内得分）</span>`;
   }
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
@@ -396,6 +410,14 @@
     autoGrow($("textarea.ans", card));
   }
 
+  // 出现标记观察器：题卡滚进视口即记「出现过」（背答案模式下不计——只看答案不算练过）；无 IntersectionObserver 时静默降级
+  let seenObs = null;
+  if (typeof IntersectionObserver !== "undefined") {
+    seenObs = new IntersectionObserver((entries) => {
+      if (showRef) return;
+      for (const e of entries) if (e.isIntersecting) markSeen(+e.target.dataset.id);
+    }, { threshold: 0 });
+  }
   function renderList() {
     const qs = visible();
     const html = qs.length ? qs.map((q, i) => cardHTML(q, i + 1)).join("")
@@ -422,6 +444,10 @@
         if (rec.s != null) restoreResult(q, card);
       }
     });
+    if (seenObs) {
+      seenObs.disconnect(); // 卡片已整批重建，重新登记观察
+      $$(".card[data-id]", list).forEach((card) => seenObs.observe(card));
+    }
     updateBulkBar();
     updatePaperInfo();
   }
@@ -911,6 +937,7 @@
       if (window.SYNC) SYNC.markCleared();
       store = {}; save();
       hist = {}; try { localStorage.removeItem(HKEY); } catch (e) {} // 历史留档随清空一并抹掉
+      seen = {}; try { localStorage.removeItem(VKEY); } catch (e) {} // 出现标记同抹：全部题目回到「从未出现」最高档
       renderStats(); renderChapters(); renderList(); updateBulkBar();
       toast("已清空全部记录、得分与历史留档");
     });

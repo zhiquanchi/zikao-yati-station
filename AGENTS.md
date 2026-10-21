@@ -33,8 +33,8 @@
 - `grading.js` 纯函数、无 DOM、零网络，浏览器挂 `window.GRADER`、bun 测试经 import 副作用挂 `globalThis.GRADER`，保持 UMD IIFE 结构。
 - 文案与 UI 忌大段文字：解析结构化「考点标签→答案行→逐条短句（关键词加粗）→简答得分点编号列表」；按真实考卷分值思考（默认单选 1/填空 2/简答 5，组卷约 100 分——均在 subject.json `paper` 可配）。单选题无独立结果区与底部面板：判分结果内联选项区（正确项 `.opt.right`+「✓ 正确答案」、错选 `.opt.wrong`+「你的选择 ✗」、其余 `.dim`），解析面板 `.explain` 在 `.opts` 末尾；未判分开解析同样标 ✓；背答案同理；选项锁定判据＝卡上有 `.redo-btn`。填空/简答走「结果区+底部面板」。
 - 填空题答案**完全一致才给分**（仅容忍全半角/大小写/空格，fallback 整句兜底除外）。
-- 用户数据 localStorage，键基座=subject.json `storageKey` + 同步码分区后缀（无码旧版设备保持裸键；派生键 `.shuffle` `.syncsnap` `.synccleared` `.hist` `.expl` 全部随分区派生）：改存储结构评估升版本；云同步只增删记录键不改单条形状。同步码在全局键 `quizsync.code`（identity.js 管理：静默签发/切换/迁移搬键）。app.js 启动对已判分填空记录按当前引擎重算（只改 s/ts，不动形状）。数据完全上云（v2）：`.hist`（每题最近 10 次，界面不显示）与 `.expl`（AI 解析缓存，saveExplCache 落 `ts`）随同步推送/写回；历史归档与解析缓存跨设备续用。「清空记录」三道闸门连 `.hist` 清除（clearedAt 压制仅本人槽位，且不洗 `.expl`）。
-- 随机组卷即全新：勾选或换一批都 `newShuffle`——先 `archiveHist` 再清卷内作答（保留 v 看过标记供加权），删除经墓碑同步云端；刷新不触发清理。组卷抽题池跟随当前筛选（`passFilters(q, true)`）；卷激活后状态筛选不再影响卷面，章节/题型/搜索卷内收窄；池空不组卷（勾选回退/换一批保留原卷）；卷面恢复只验 picked 题号。
+- 用户数据 localStorage，键基座=subject.json `storageKey` + 同步码分区后缀（无码旧版设备保持裸键；派生键 `.shuffle` `.syncsnap` `.synccleared` `.hist` `.expl` `.seen` 全部随分区派生）：改存储结构评估升版本；云同步只增删记录键不改单条形状。同步码在全局键 `quizsync.code`（identity.js 管理：静默签发/切换/迁移搬键）。app.js 启动对已判分填空记录按当前引擎重算（只改 s/ts，不动形状）。数据完全上云（v2）：`.hist`（每题最近 10 次，界面不显示）与 `.expl`（AI 解析缓存，saveExplCache 落 `ts`）随同步推送/写回；历史归档与解析缓存跨设备续用。「清空记录」三道闸门连 `.hist` 与本机出现标记 `.seen` 一并清除（clearedAt 压制仅本人槽位，且不洗 `.expl`）。
+- 随机组卷即全新：勾选或换一批都 `newShuffle`——先 `archiveHist` 再清卷内作答（保留 v 看过标记供加权），删除经墓碑同步云端；刷新不触发清理。抽题权重＝题型×状态四档：从未出现（题卡未滚进过刷题/组卷视口、未进卷面、无任何记录——本机派生键 `.seen` 标记，不入云同步；背答案滚动不算出现）×8 ＞ 出现过且看过解析/未答/错 ×4 ＞ 60~79 ×1 ＞ 已掌握未看解析 ×0.3。组卷抽题池跟随当前筛选（`passFilters(q, true)`）；卷激活后状态筛选不再影响卷面，章节/题型/搜索卷内收窄；池空不组卷（勾选回退/换一批保留原卷）；卷面恢复只验 picked 题号。
 - AI 判分链路保持：`grade()` 纯同步，AI 只出现在 upgradeEssay 异步链；`svc_down/no_key/bad_key` 会话熔断 `aiOff`；restore 有 `g` 不再打网络。单选逐项解析按钮仅当 `meta.flags.explain` 为真时渲染。
 
 ## 判分 AI 服务（grade-svc · /api/grade）

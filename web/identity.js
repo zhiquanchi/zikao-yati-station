@@ -10,7 +10,7 @@
   const WAS_LEGACY_KEY = "quizsync.waslegacy"; // 迁移过来的身份可退回旧版槽（新访客不显示此路）
   const CODE_RE = /^[a-z2-9]{4,10}$/;
   const ALPHA = "abcdefghjkmnpqrstuvwxyz23456789"; // 去 i/o/l/0/1，手抄不易错
-  const SUFFIXES = ["", ".shuffle", ".syncsnap", ".synccleared", ".hist", ".expl"]; // 一个分区的全部键（后两个本机专属，不入云但按用户分区）
+  const SUFFIXES = ["", ".shuffle", ".syncsnap", ".synccleared", ".hist", ".expl", ".seen"]; // 一个分区的全部键（hist/expl 随 v2 同步推拉；.seen 组卷出现标记仅本机——均按用户分区）
 
   const ls = {
     get(k) { try { return root.localStorage ? root.localStorage.getItem(k) : null; } catch (e) { return null; } },
@@ -46,7 +46,7 @@
   function clearCode() { ls.del(CODE_KEY); ls.del(WAS_LEGACY_KEY); }
   const wasLegacy = () => ls.get(WAS_LEGACY_KEY) != null;
 
-  // migrateTo：当前分区 6 键「搬」到目标码分区并切换身份（搬而非抄：
+  // migrateTo：当前分区 7 键「搬」到目标码分区并切换身份（搬而非抄：
   // 回到旧版槽时快照为空，diff 不会向云端误发对方记录的墓碑）。
   function migrateTo(rawKey, code) {
     if (!valid(code)) return false;
