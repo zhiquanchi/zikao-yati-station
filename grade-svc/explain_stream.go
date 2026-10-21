@@ -37,9 +37,9 @@ type explReason struct {
 
 // explTry 是一次流式上游调用的参数组合：被网关拒绝的参数逐个降级重试。
 type explTry struct {
-	jsonFmt bool // response_format: json_object
-	search  bool // enable_search
-	effort  bool // reasoning_effort: medium（思考等级中等；qwen 系思考默认偏长，降到中等既提速又留出流式余量）
+	jsonFmt  bool // response_format: json_object
+	search   bool // enable_search
+	thinkOff bool // enable_thinking: false（彻底关闭思考；qwen3.8-flash 流式默认开思考，不关则首内容帧前静默约 20s）
 }
 
 // explScanner 是面向解析输出格式（{"found":…,"items":[{"key":"A","why":"…"},…]}）的增量 JSON 扫描器。
@@ -250,6 +250,9 @@ func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletio
 	if try.search {
 		opts = append(opts, option.WithJSONSet("enable_search", true))
 	}
+	if try.thinkOff {
+		opts = append(opts, option.WithJSONSet("enable_thinking", false))
+	}
 	client := openai.NewClient(opts...)
 	params := openai.ChatCompletionNewParams{
 		Messages:    msgs,
@@ -260,9 +263,6 @@ func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletio
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}
-	}
-	if try.effort {
-		params.ReasoningEffort = shared.ReasoningEffortMedium
 	}
 	stream := client.Chat.Completions.NewStreaming(ctx, params)
 	defer stream.Close()
@@ -292,7 +292,7 @@ func (g *grader) streamExplOnce(ctx context.Context, msgs []openai.ChatCompletio
 	return full.String(), nil
 }
 
-// streamExplCall 带容错的流式调用：response_format / enable_search / reasoning_effort 被拒时
+// streamExplCall 带容错的流式调用：response_format / enable_search / enable_thinking 被拒时
 // 去参重试（与非流式 callExplain 同策略，被拒哪个降哪个）；重试重建扫描器，
 // 且若旧段已推过内容或思考增量则先发 reset（前端两类面板一起清）。
 // 返回的 bool＝本段是否推过任何可见增量（内容或思考），决定弃用时要不要清屏。
@@ -307,7 +307,7 @@ func (g *grader) streamExplCall(ctx context.Context, msgs []openai.ChatCompletio
 		sawReason = true
 		return emit("reason", explReason{Text: txt})
 	}
-	try := explTry{jsonFmt: true, search: search, effort: true}
+	try := explTry{jsonFmt: true, search: search, thinkOff: true}
 	sc := newSc()
 	content, err := g.streamExplOnce(ctx, msgs, timeout, try, sc, onReason)
 	for err != nil && !errors.Is(err, explErrClient) {
@@ -320,8 +320,8 @@ func (g *grader) streamExplCall(ctx context.Context, msgs []openai.ChatCompletio
 		case try.search && strings.Contains(es, "enable_search"):
 			try.search = false
 			dropped = true
-		case try.effort && strings.Contains(es, "reasoning_effort"):
-			try.effort = false
+		case try.thinkOff && strings.Contains(es, "enable_thinking"):
+			try.thinkOff = false
 			dropped = true
 		}
 		if !dropped {
@@ -340,7 +340,8 @@ func (g *grader) streamExplCall(ctx context.Context, msgs []openai.ChatCompletio
 }
 
 // ExplainStream ＝ Explain 的流式版：事件序列 reason*/delta* [reset reason*/delta*] done；
-// reason＝思考过程增量（思考等级中等，reasoning_effort=medium），仅供展示、不入 done；
+// 上游请求带 enable_thinking:false 彻底关闭思考（正常无 reason 事件；通道保留——
+// 网关静默忽略该参数时思考照常透传展示，不至于白屏）；reason 仅供展示、不入 done；
 // 失败以 error 事件表达（payload 与 REST 错误体同形 {error, detail}）；请求体校验失败仍走
 // JSON 错误（发生在流头之前）。缓存语义不变：命中不产生 delta，调用方直接把 cached=true 的
 // ExplainResp 发成 done。

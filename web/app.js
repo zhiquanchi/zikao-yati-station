@@ -537,8 +537,9 @@
   }
 
   // ——— 单选逐项解析：同源 /api/grade 的 task:"explain"（stream:true 走 SSE 流式）——LLM 先依《考点串讲》
-  // 资料作答，资料不足自动带 enable_search 联网补充；思考过程（reason 事件，思考等级中等）实时展示、
-  // 生成中展开、完成即收起（可手动切换，思考内容不入缓存）；逐选项 delta 实时渲染，done 整包整形后落缓存。
+  // 资料作答，资料不足自动带 enable_search 联网补充；上游默认关闭思考（enable_thinking:false），
+  // 若仍推 reason 事件则实时展示思考过程（生成中展开、完成即收起、可手动切换，不入缓存）；
+  // 逐选项 delta 实时渲染，done 整包整形后落缓存。
   // 应答为普通 JSON（旧网关/错误体）时回落整包口径；结果按题缓存于 localStorage（派生键），
   // 随 v2 云同步上云（expl 段逐题 ts LWW，跨设备复用不重复烧 token） ———
   const EKEY = KEY + ".expl";

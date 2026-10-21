@@ -202,8 +202,8 @@ func TestExplainStreamMaterialFirst(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("资料充分应只调 1 次，实际 %d", len(calls))
 	}
-	if calls[0].body["reasoning_effort"] != "medium" {
-		t.Errorf("思考等级应为中等（reasoning_effort=medium）：%v", calls[0].body["reasoning_effort"])
+	if v, ok := calls[0].body["enable_thinking"]; !ok || v != false {
+		t.Errorf("应带 enable_thinking:false 关闭思考：%v (present=%v)", v, ok)
 	}
 	if res.Source != "material" || len(res.Items) != 4 || !res.Items[0].Correct {
 		t.Errorf("res=%+v", res)
@@ -225,11 +225,11 @@ func TestExplainStreamMaterialFirst(t *testing.T) {
 	}
 }
 
-// 上游拒绝 reasoning_effort → 去参重试一次成功；被拒发生在建流前，不产生 reset。
-func TestExplainStreamEffortRejected(t *testing.T) {
+// 上游拒绝 enable_thinking → 去参重试一次成功（思考回落为上游默认）；被拒发生在建流前，不产生 reset。
+func TestExplainStreamThinkingParamRejected(t *testing.T) {
 	var calls []explCall
 	srv := fakeExplStream(t, [][]string{
-		{"!Unsupported parameter: 'reasoning_effort' is not supported"},
+		{"!Unsupported parameter: 'enable_thinking' is not supported"},
 		splitRunes(explSearchItems, 4),
 	}, &calls)
 	defer srv.Close()
@@ -239,8 +239,8 @@ func TestExplainStreamEffortRejected(t *testing.T) {
 	if err != nil || res.Source != "search" || len(calls) != 2 {
 		t.Fatalf("应去参重试成功：err=%v res=%+v calls=%d", err, res, len(calls))
 	}
-	if _, ok := calls[1].body["reasoning_effort"]; ok {
-		t.Errorf("去参重试不应再带 reasoning_effort")
+	if _, ok := calls[1].body["enable_thinking"]; ok {
+		t.Errorf("去参重试不应再带 enable_thinking")
 	}
 	if l.resets != 0 {
 		t.Errorf("建流前被拒不应发 reset：%+v", l)
