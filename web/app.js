@@ -170,7 +170,7 @@
       updateBulkBar();
       return;
     }
-    if (prev && prev.s != null) { updateBulkBar(); return; } // 已判分：保留旧结果，直到重新提交
+    if (prev && prev.s != null) { updateBulkBar(); return; } // 已判分：保留首次结果，编辑不落盘（重新评分也不改写记录）
     store[q.id] = { u, s: null, ts: Date.now(), v: prev && prev.v };
     save();
     updateBulkBar();
@@ -188,7 +188,7 @@
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  // ——— 历史作答留档：判过分的记录在「组卷清理 / 重做此题 / 重新评分顶掉旧分」前归档进本机派生键 `.hist`
+  // ——— 历史作答留档：判过分的记录在「组卷清理 / 重做此题」前归档进本机派生键 `.hist`
   // （每题最近 10 次；只存本机、不入云同步；**界面上不显示**——组卷/刷题时不出现历史做题数据，仅留档备查）———
   const HKEY = KEY + ".hist";
   let hist = {};
@@ -499,27 +499,35 @@
     return data;
   }
   // 成功：卡片升级为 AI 分并写 store.g；失败：保留本机分并在卡上标注原因。
-  function upgradeEssay(q, input, localOut) {
+  // record=false（重新评分）只把 AI 分展示出来，绝不写 store——首次评分才是掌握状态的依据。
+  function upgradeEssay(q, input, localOut, record = true) {
     if (!aiEnabled()) return Promise.resolve(false);
     const c0 = liveCard(q.id);
     if (c0) markAIGrading(c0);
+    // 结果回来时卡片仍停在这份作答才渲染（等分期间改了答案/切了模式即丢弃）
+    const freshCard = () => {
+      const c = liveCard(q.id);
+      return c && JSON.stringify(collect(q, c)) === JSON.stringify(input) ? c : null;
+    };
     return requestAI(q, input)
       .then((data) => {
-        const rec = store[q.id];
-        if (!rec || rec.u !== input) return false; // 用户已重答，丢弃过期结果
-        rec.s = data.score;
-        rec.g = { score: data.score, per: data.per, ts: Date.now() };
-        save();
-        const c = liveCard(q.id);
-        if (c) showResult(q, c, input, { s: data.score, per: data.per, engine: "ai" });
-        renderStats(); renderChapters();
+        if (record) {
+          const rec = store[q.id];
+          if (!rec || rec.u !== input) return false; // 用户已重答，丢弃过期结果
+          rec.s = data.score;
+          rec.g = { score: data.score, per: data.per, ts: Date.now() };
+          save();
+        }
+        const c = freshCard();
+        if (!c) return false;
+        showResult(q, c, input, { s: data.score, per: data.per, engine: "ai", practice: !record });
+        if (record) { renderStats(); renderChapters(); }
         return true;
       })
       .catch((e) => {
         if (e.code === "svc_down" || e.code === "no_key" || e.code === "bad_key") aiOff = true;
-        const rec = store[q.id];
-        const c = liveCard(q.id);
-        if (c && rec && rec.u === input) showResult(q, c, input, Object.assign({}, localOut, { unavailable: AI_CODES[e.code] || e.code }));
+        const c = freshCard();
+        if (c) showResult(q, c, input, Object.assign({}, localOut, { unavailable: AI_CODES[e.code] || e.code, practice: !record }));
         return false;
       });
   }
@@ -748,6 +756,7 @@
 
   // 判分后的公共收尾：提交按钮变「重新评分」、追加「重做此题」（重做前留档）、刷新分数胶囊、未满分自动展开解析
   // （单选展开的是选项区内的解析，填空/简答是底部面板）
+  // out.practice：重新评分只演示本次练习结果，不刷新分数胶囊（掌握状态以首次评分为准）
   function armResultUI(q, card, out) {
     const btn = $(".grade-btn", card);
     btn.textContent = "重新评分";
@@ -760,7 +769,11 @@
         document.querySelector(`.card[data-id="${q.id}"]`)?.scrollIntoView({ block: "center" });
       });
     }
-    updateScoreChip(card, out.s);
+    if (out.practice) {
+      if (!$(".practice-tag", card)) btn.insertAdjacentHTML("afterend", '<span class="practice-tag">练习分 · 不计入掌握</span>');
+    } else {
+      updateScoreChip(card, out.s);
+    }
     // 未满分自动给出具体解析；简答题例外：默认只展开得分结果，解析由用户手动点开
     if (out.s < 100 && q.type !== "essay" && card.__setExplain) card.__setExplain(true);
   }
@@ -830,13 +843,20 @@
       const input = collect(q, card);
       if (input == null) return flash(card, q.type === "single" ? "请先选择一个选项" : "请先写出你的答案");
       if (q.type === "blank" && input.every((v) => !v)) return flash(card, "请先填写答案");
+      const prev = store[q.id];
+      const first = !(prev && prev.s != null); // 首次评分（含草稿）：只有这一次会写入记录并决定掌握状态
       const out = grade(q, input);
-      archiveHist(q.id, store[q.id]); // 重新评分顶掉旧得分前留档
-      store[q.id] = { u: input, s: out.s, ts: Date.now(), v: store[q.id] && store[q.id].v }; // 保留「看过解析」标记，判分不洗白
-      save();
+      if (first) {
+        archiveHist(q.id, prev); // 重新评分不再顶分留档：旧分即首次分，保留在记录里
+        store[q.id] = { u: input, s: out.s, ts: Date.now(), v: prev && prev.v }; // 保留「看过解析」标记，判分不洗白
+        save();
+      } else {
+        out.practice = true; // 重新评分只展示练习结果，掌握状态仍按首次评分
+      }
       showResult(q, card, input, out);
-      renderStats(); renderChapters(); updateBulkBar();
-      if (q.type === "essay") upgradeEssay(q, input, out); // 异步升级为 AI 判分，失败保留上方本机分
+      if (first) { renderStats(); renderChapters(); }
+      updateBulkBar();
+      if (q.type === "essay") upgradeEssay(q, input, out, first); // 异步升级为 AI 判分，失败保留上方本机分
     });
     // 回车提交（焦点在卡片输入区内）
     card.addEventListener("keydown", (e) => {
