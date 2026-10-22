@@ -82,7 +82,7 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 
 ## 简答 AI 判分（grade-svc，可选增强）
 
-简答在本机估分后异步升级为千问语义判分（🤖 徽标 + 逐要点点评）；`grade-svc/` 为多科目共享的 Go 服务（OpenAI Go SDK · 兼容模式 · 默认 `qwen3.8-flash`），分数口径与本机引擎一致（三档锚点），同「题干+要点+作答」服务内缓存不重复计费。**科目身份经 `SUBJECT_DIR` 注入**：阅卷 prompt 科目名、逐项解析参考资料与资料名全部读自科目目录（`subject.json` + `grade/reference.md`），代码中无科目硬编码；未设 `SUBJECT_DIR` 直接拒启。
+简答在本机估分后异步升级为千问语义判分（🤖 徽标 + 逐要点点评 + 整段总评「AI 完整回复」折叠块）；`grade-svc/` 为多科目共享的 Go 服务（OpenAI Go SDK · 兼容模式 · 默认 `qwen3.8-flash`），分数口径与本机引擎一致（三档锚点），同「题干+要点+作答」服务内缓存不重复计费。**科目身份经 `SUBJECT_DIR` 注入**：阅卷 prompt 科目名、逐项解析参考资料与资料名全部读自科目目录（`subject.json` + `grade/reference.md`），代码中无科目硬编码；未设 `SUBJECT_DIR` 直接拒启。
 
 - 本地：`export QWEN_API_KEY=sk-xxx && ./start-ai.sh <科目>`（判分端口读 subject.json；os=8792、net=8794）。
 - 生产：`--build-arg SUBJECT=<科目目录>` 出每科目镜像（上下文 = 仓库根），每科目一个容器、容器内统一 8792、**有意不映射宿主端口**，密钥只在 Go 进程环境；**严禁把密钥写进前端源码或 data 文件**。

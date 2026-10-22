@@ -511,16 +511,18 @@
     };
     return requestAI(q, input)
       .then((data) => {
+        const summary = typeof data.summary === "string" ? data.summary : ""; // 「AI 完整回复」整段总评（旧服务无此字段）
         if (record) {
           const rec = store[q.id];
           if (!rec || rec.u !== input) return false; // 用户已重答，丢弃过期结果
           rec.s = data.score;
           rec.g = { score: data.score, per: data.per, ts: Date.now() };
+          if (summary) rec.g.summary = summary; // 随作答记录持久化（刷新/换设备经云同步续用）
           save();
         }
         const c = freshCard();
         if (!c) return false;
-        showResult(q, c, input, { s: data.score, per: data.per, engine: "ai", practice: !record });
+        showResult(q, c, input, { s: data.score, per: data.per, engine: "ai", summary, practice: !record, fresh: true });
         if (record) { renderStats(); renderChapters(); }
         return true;
       })
@@ -746,9 +748,14 @@
         : out.unavailable
           ? `<span class="ai-badge local" title="AI 判分不可用：${esc(out.unavailable)}">本机估分</span>`
           : "";
+      // 「AI 完整回复」：整段总评折叠块；刚判完自动展开，刷新/恢复后收起（旧缓存无 summary 则不渲染）
+      const reply = out.summary
+        ? `<details class="ai-reply"${out.fresh ? " open" : ""}><summary>🤖 AI 完整回复</summary>
+            <div class="ai-reply-body">${esc(out.summary)}</div></details>`
+        : "";
       $(".result", card).innerHTML = `<div class="verdict"><span class="score-big ${scoreCls(out.s)}">${out.s}</span>
         <span class="tag ${scoreCls(out.s)}">${label}</span>${badge}</div>
-        <div class="point-list">${pts}</div>${refBlock(q)}`;
+        <div class="point-list">${pts}</div>${reply}${refBlock(q)}`;
     }
     $(".result", card).classList.add("show");
     armResultUI(q, card, out);
@@ -804,7 +811,7 @@
     // 简答已有 AI 判分结果（g 字段）时直接渲染，不再重算、不打网络；否则走本机词面判分
     // （旧版分点记录先归一为整题文本再判，避免整题分支读到空串）
     const out = q.type === "essay" && rec.g
-      ? { s: rec.g.score, per: rec.g.per, engine: "ai" }
+      ? { s: rec.g.score, per: rec.g.per, engine: "ai", summary: rec.g.summary || "" }
       : grade(q, q.type === "essay" ? { mode: "whole", whole: essayTextOf(rec.u) } : rec.u);
     showResult(q, card, q.type === "single" ? rec.u : rec.u, out);
   }

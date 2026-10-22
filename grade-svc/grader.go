@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://maas.qianwenaiapi.com/compatible-mode/v1"
-	defaultModel   = "qwen3.8-flash"
-	maxAnswerRunes = 8000
-	maxCache       = 512
+	defaultBaseURL  = "https://maas.qianwenaiapi.com/compatible-mode/v1"
+	defaultModel    = "qwen3.8-flash"
+	maxAnswerRunes  = 8000
+	maxSummaryRunes = 600 // 总评防御上限（prompt 要 80~200 字，正常远低于此；防上游跑飞撑爆载荷）
+	maxCache        = 512
 )
 
 // GradeReq 是前端 POST /api/grade 的请求体（分点作答由前端拼成带编号的多行文本）。
@@ -41,18 +42,21 @@ type GradeReq struct {
 
 // PerPoint 与 grading.js gradeEssay 返回的 per 元素形状兼容（segs 置空，另附 comment 点评）。
 type PerPoint struct {
-	Text    string  `json:"text"`
-	Cov     float64 `json:"cov"`
-	State   string  `json:"state"`
-	Comment string  `json:"comment"`
+	Text    string   `json:"text"`
+	Cov     float64  `json:"cov"`
+	State   string   `json:"state"`
+	Comment string   `json:"comment"`
 	Segs    []string `json:"segs"`
 }
 
+// GradeResp 在逐要点结果之外带一段整段总评 summary（「AI 完整回复」，前端折叠展示；
+// 旧客户端只读 per/score 不受影响，缺 summary 的老缓存也照常渲染）。
 type GradeResp struct {
-	Engine string     `json:"engine"`
-	Score  int        `json:"score"`
-	Per    []PerPoint `json:"per"`
-	Cached bool       `json:"cached"`
+	Engine  string     `json:"engine"`
+	Score   int        `json:"score"`
+	Summary string     `json:"summary"`
+	Per     []PerPoint `json:"per"`
+	Cached  bool       `json:"cached"`
 }
 
 // svcErr 携带对外 HTTP 状态与错误码，handler 据此应答；前端按 code 决定是否整会话降级。
@@ -108,9 +112,10 @@ func (g *grader) systemPrompt(n int) string {
 	return fmt.Sprintf(`你是自考《%[1]s》科目的阅卷老师。请对照参考答案要点，逐条评估学生作答的覆盖程度。
 评分口径：
 - cov 为该要点的覆盖度，0~1 的小数：语义一致即高分（0.8~1，允许措辞与顺序不同）；意思沾边但不完整给 0.3~0.7；只写到要点标题词而无实质解释约 0.5~0.6；完全没答到或答错给 0~0.2。
-- comment 不超过 25 字，指出答到了什么、缺了什么。
+- per 里的 comment 不超过 25 字，指出答到了什么、缺了什么。
+- summary 为整段总评（80~200 字，完整成句）：先点明总体掌握情况与得分原因，再指出答得好的地方、主要失分点与改进方向；不要分条、不要只写关键词、不要省略截断。
 只输出一个 JSON 对象，不要输出其它任何文字，格式：
-{"per":[{"i":1,"cov":0.8,"comment":"答到并发含义"},{"i":2,"cov":0.4,"comment":"只提标题未解释"}]}
+{"summary":"总体掌握……建议……","per":[{"i":1,"cov":0.8,"comment":"答到并发含义"},{"i":2,"cov":0.4,"comment":"只提标题未解释"}]}
 per 数组必须恰好包含 %[2]d 条，i 从 1 开始与要点编号对应。`, g.subj.Name, n)
 }
 
@@ -138,6 +143,7 @@ func (g *grader) callLLM(ctx context.Context, msgs []openai.ChatCompletionMessag
 		Messages:    msgs,
 		Model:       shared.ChatModel(g.model),
 		Temperature: openai.Float(0),
+		MaxTokens:   openai.Int(2048), // 总评+逐点点评整包不截断（截断会导致 JSON 解析失败）
 	}
 	if jsonFmt {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
@@ -223,7 +229,8 @@ func clampRunes(s string, n int) string {
 // score 按 cov 均值×100 重算；条数不符/编号越界重复/缺 cov 均判为失败。
 func normalize(content string, r *GradeReq) (*GradeResp, error) {
 	var out struct {
-		Per []struct {
+		Summary string `json:"summary"`
+		Per     []struct {
 			I       *int     `json:"i"`
 			Cov     *float64 `json:"cov"`
 			Comment string   `json:"comment"`
@@ -254,7 +261,8 @@ func normalize(content string, r *GradeReq) (*GradeResp, error) {
 		per[idx] = PerPoint{Text: r.Points[idx], Cov: cov, State: stateOf(cov), Comment: clampRunes(strings.TrimSpace(it.Comment), 60), Segs: []string{}}
 		sum += cov
 	}
-	return &GradeResp{Engine: "ai", Score: int(math.Round(sum / float64(len(per)) * 100)), Per: per}, nil
+	return &GradeResp{Engine: "ai", Score: int(math.Round(sum / float64(len(per)) * 100)),
+		Summary: clampRunes(strings.TrimSpace(out.Summary), maxSummaryRunes), Per: per}, nil
 }
 
 func cacheKey(r GradeReq) string {

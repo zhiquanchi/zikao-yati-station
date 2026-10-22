@@ -51,6 +51,9 @@ func fakeOpenAI(t *testing.T, content string, calls *atomic.Int32) *httptest.Ser
 		if m, _ := got["model"].(string); m != defaultModel {
 			t.Errorf("model=%v，期望 %s", got["model"], defaultModel)
 		}
+		if v, _ := got["max_tokens"].(float64); v < 1024 {
+			t.Errorf("max_tokens=%v，总评+逐点点评需留足输出预算", got["max_tokens"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"id":"x","object":"chat.completion","created":0,"model":"fake","choices":[{"index":0,"message":{"role":"assistant","content":%s},"finish_reason":"stop"}]}`, quote(content))
 	}))
@@ -65,12 +68,15 @@ func quote(s string) string {
 
 func TestNormalizeBasic(t *testing.T) {
 	r := sampleReq()
-	content := `{"per":[{"i":1,"cov":1.5,"comment":"完全答到"},{"i":2,"cov":0.5},{"i":3,"cov":0.22},{"i":4,"cov":0.21}]}`
+	content := `{"summary":"并发答到了，共享只提标题。","per":[{"i":1,"cov":1.5,"comment":"完全答到"},{"i":2,"cov":0.5},{"i":3,"cov":0.22},{"i":4,"cov":0.21}]}`
 	// 先扩 points 到 4 条以覆盖三档 state
 	r.Points = append(r.Points, "虚拟：一次逻辑扩张", "异步：时间片轮转")
 	res, err := normalize(content, &r)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if res.Summary != "并发答到了，共享只提标题。" {
+		t.Errorf("summary=%q，应保留整段总评", res.Summary)
 	}
 	wantCov := []float64{1, 0.5, 0.22, 0.21}
 	wantState := []string{"hit", "hit", "part", "miss"}
@@ -111,12 +117,35 @@ func TestNormalizePositionalAndOrder(t *testing.T) {
 	}
 }
 
+func TestNormalizeSummaryOptionalAndClamped(t *testing.T) {
+	r := sampleReq()
+	// 老口径/模型漏字段：缺 summary 不禁用判分，总评留空由前端不渲染
+	res, err := normalize(`{"per":[{"i":1,"cov":0.8},{"i":2,"cov":0.4}]}`, &r)
+	if err != nil || res.Summary != "" {
+		t.Fatalf("缺 summary 应容错：%v %q", err, res.Summary)
+	}
+	// 首尾空白清理
+	res, err = normalize(`{"summary":"  总评：概念答到但缺解释。 ","per":[{"i":1,"cov":0.8},{"i":2,"cov":0.4}]}`, &r)
+	if err != nil || res.Summary != "总评：概念答到但缺解释。" {
+		t.Fatalf("summary 应 trim：%v %q", err, res.Summary)
+	}
+	// 上游跑飞超长：按 maxSummaryRunes 截断，防撑爆响应/同步载荷
+	long := strings.Repeat("评", maxSummaryRunes+20)
+	res, err = normalize(fmt.Sprintf(`{"summary":%s,"per":[{"i":1,"cov":0.8},{"i":2,"cov":0.4}]}`, quote(long)), &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len([]rune(res.Summary)); n != maxSummaryRunes {
+		t.Errorf("超长 summary 应截断到 %d 字，实际 %d", maxSummaryRunes, n)
+	}
+}
+
 func TestNormalizeRejects(t *testing.T) {
 	r := sampleReq()
 	cases := map[string]string{
-		"条数不符":  `{"per":[{"i":1,"cov":0.5}]}`,
-		"编号越界":  `{"per":[{"i":9,"cov":0.5},{"i":1,"cov":0.5}]}`,
-		"编号重复":  `{"per":[{"i":1,"cov":0.5},{"i":1,"cov":0.5}]}`,
+		"条数不符":    `{"per":[{"i":1,"cov":0.5}]}`,
+		"编号越界":    `{"per":[{"i":9,"cov":0.5},{"i":1,"cov":0.5}]}`,
+		"编号重复":    `{"per":[{"i":1,"cov":0.5},{"i":1,"cov":0.5}]}`,
 		"缺 cov":   `{"per":[{"i":1},{"i":2,"cov":0.5}]}`,
 		"非 JSON":  `抱歉无法判分`,
 		"cov 非数值": `{"per":[{"i":1,"cov":"高"},{"i":2,"cov":0.5}]}`,
@@ -153,7 +182,7 @@ func TestExtractJSONFenced(t *testing.T) {
 
 func TestGradeEndToEndAndCache(t *testing.T) {
 	var calls atomic.Int32
-	content := `{"per":[{"i":1,"cov":1.0,"comment":"答到并发"},{"i":2,"cov":0.6,"comment":"沾边不完整"}]}`
+	content := `{"summary":"并发答到，共享只沾边。建议补共享的实质解释。","per":[{"i":1,"cov":1.0,"comment":"答到并发"},{"i":2,"cov":0.6,"comment":"沾边不完整"}]}`
 	srv := fakeOpenAI(t, content, &calls)
 	defer srv.Close()
 	g := newGrader("sk-test", srv.URL, "", testSubject())
@@ -164,9 +193,12 @@ func TestGradeEndToEndAndCache(t *testing.T) {
 	if res.Engine != "ai" || res.Cached || res.Score != 80 {
 		t.Errorf("res=%+v", res)
 	}
+	if res.Summary != "并发答到，共享只沾边。建议补共享的实质解释。" {
+		t.Errorf("summary 应随判分返回：%q", res.Summary)
+	}
 	res2, err := g.Grade(context.Background(), sampleReq())
-	if err != nil || !res2.Cached {
-		t.Errorf("第二次应命中缓存：%+v %v", res2, err)
+	if err != nil || !res2.Cached || res2.Summary != res.Summary {
+		t.Errorf("第二次应命中缓存且总评随缓存：%+v %v", res2, err)
 	}
 	if calls.Load() != 1 {
 		t.Errorf("上游应只调 1 次，实际 %d", calls.Load())
@@ -261,7 +293,7 @@ func TestHandlerNoKey501(t *testing.T) {
 }
 
 func TestHandlerPassThrough(t *testing.T) {
-	content := `{"per":[{"i":1,"cov":1.0},{"i":2,"cov":1.0}]}`
+	content := `{"summary":"全部答到。","per":[{"i":1,"cov":1.0},{"i":2,"cov":1.0}]}`
 	srv := fakeOpenAI(t, content, nil)
 	defer srv.Close()
 	g := newGrader("sk-test", srv.URL, "", testSubject())
@@ -276,7 +308,7 @@ func TestHandlerPassThrough(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res.Score != 100 || len(res.Per) != 2 {
+	if res.Score != 100 || len(res.Per) != 2 || res.Summary != "全部答到。" {
 		t.Errorf("res=%+v", res)
 	}
 }
