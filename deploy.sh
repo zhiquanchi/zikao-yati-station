@@ -99,15 +99,21 @@ else
 fi
 
 # —— 8. 探活：逐科目前缀（静态 + 云同步链路：旧版兼容槽可读、Go 端拒收非法码）——
+# 容器刚 recreate 时 portal 解析 sync-svc 可能瞬时 EAI_AGAIN：探活带重试，避免把启动竞态误判成发布失败。
 for pre in "${PREFIXES[@]}"; do
-  curl -fsS -o /dev/null -w "本机外网探活 /$pre/ → HTTP %{http_code}\n" --max-time 15 "http://$IP/$pre/" || \
+  curl -fsS -o /dev/null -w "本机外网探活 /$pre/ → HTTP %{http_code}\n" --max-time 15 --retry 3 --retry-delay 2 --retry-all-errors "http://$IP/$pre/" || \
     echo "⚠ 本机访问 /$pre/ 失败：服务器上先自查 curl -H 'Host: $IP' http://127.0.0.1/$pre/ ；通则到阿里云控制台放行安全组 80"
-  SYNC_JSON=$(curl -fsS --max-time 15 "http://$IP/$pre/api/store" || true)
+  SYNC_JSON=""
+  for _ in 1 2 3 4 5; do
+    SYNC_JSON=$(curl -fsS --max-time 15 "http://$IP/$pre/api/store" || true)
+    case "$SYNC_JSON" in *'"blob"'*) break ;; esac
+    sleep 2
+  done
   case "$SYNC_JSON" in
     *'"blob"'*) echo "☁️ /$pre/api/store 云同步（sync-svc）OK" ;;
     *) echo "❌ /$pre/api/store 云同步异常（查 sync-svc 容器与 portal 转发）"; exit 1 ;;
   esac
-  BAD_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://$IP/$pre/api/store/ABCD")
+  BAD_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 --retry 3 --retry-delay 2 "http://$IP/$pre/api/store/ABCD")
   [ "$BAD_CODE" = "400" ] || { echo "❌ /$pre 非法同步码应 400，实得 $BAD_CODE（Go 校验或转发链路不对）"; exit 1; }
 done
 echo "✅ 发布完成：http://$IP/${PREFIXES[0]}/ …（共 ${#PREFIXES[@]} 科）"
