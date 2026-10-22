@@ -145,22 +145,7 @@ textarea.ans {
   width: 100%; min-height: calc(1.5em + 22px); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
   font: inherit; font-size: 14px; line-height: 1.5; resize: none; background: #fcfdff; /* 高度由 app.js autoGrow 随内容自适应 */
 }
-textarea.ans:focus, .stem input.blank:focus, .pinput:focus, .toolbar :focus { outline: 2px solid #c3caff; }
-.points-form { display: grid; gap: 8px; margin-bottom: 4px; }
-.prow { display: flex; gap: 10px; align-items: center; }
-.prow label { flex: none; font-size: 13px; color: var(--muted); width: 58px; }
-.pinput {
-  flex: 1; border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; font: inherit; font-size: 14px; background: #fcfdff;
-}
-.pinput.right { border-color: var(--ok); background: var(--ok-soft); }
-.pinput.wrong { border-color: var(--bad); background: var(--bad-soft); }
-
-.modes { display: flex; gap: 6px; margin-bottom: 10px; }
-.mode-btn {
-  font-size: 13px; border: 1px solid var(--line); background: #fff; color: var(--muted);
-  border-radius: 8px; padding: 4px 12px; cursor: pointer;
-}
-.mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+textarea.ans:focus, .stem input.blank:focus, .toolbar :focus { outline: 2px solid #c3caff; }
 
 .actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
 .primary {
@@ -317,9 +302,7 @@ textarea.ans:focus, .stem input.blank:focus, .pinput:focus, .toolbar :focus { ou
   .stem { font-size: 15px; }
   .stem input.blank { width: 96px; font-size: 16px; }
   .opt { padding: 12px; font-size: 15px; }
-  .mode-btn { padding: 8px 16px; font-size: 14px; }
-  .prow label { width: 50px; }
-  .pinput, textarea.ans { font-size: 16px; }
+  textarea.ans { font-size: 16px; }
   .actions .primary, .actions .secondary { flex: 1; padding: 12px 10px; }
   .point { padding: 10px 12px; }
   .ref-block, .explain { padding: 10px 12px; }

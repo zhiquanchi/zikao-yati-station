@@ -293,11 +293,7 @@
     } else if (q.type === "blank") {
       body = `<div class="stem">${stemHTML(q)}</div>`;
     } else {
-      const mode = (rec && rec.u && rec.u.mode) || "whole";
-      body = `<div class="modes">
-        <button class="mode-btn ${mode === "whole" ? "active" : ""}" data-mode="whole">整题作答</button>
-        <button class="mode-btn ${mode === "points" ? "active" : ""}" data-mode="points">分点作答（${q.points.length} 个要点）</button>
-      </div><div class="essay-form"></div>`;
+      body = `<div class="essay-form"></div>`;
     }
     const head = `<div class="card-head">
         <span class="qno">第 ${idx} 题 · 原题 #${q.id}</span>
@@ -391,22 +387,22 @@
     return html;
   }
 
-  function essayFormHTML(q, mode, rec) {
-    if (mode === "points") {
-      return `<div class="points-form">` + q.points.map((p, i) => {
-        const val = rec && rec.u && rec.u.points && rec.u.points[i] ? rec.u.points[i] : "";
-        return `<div class="prow"><label>要点${i + 1}</label><input class="pinput" data-pi="${i}" value="${esc(val)}" autocomplete="off" spellcheck="false"></div>`;
-      }).join("") + `</div><div class="hint-line">提示：每个输入框对应参考答案拆分出的一个得分点，逐条背诵。</div>`;
-    }
-    const val = rec && rec.u && rec.u.whole ? rec.u.whole : "";
+  // 旧版「分点作答」记录（该模式已下线）归一为整题文本：历史与跨设备记录照常展示、重判
+  function essayTextOf(u) {
+    if (!u) return "";
+    if (u.mode === "points") return (u.points || []).map((p) => (p || "").trim()).filter(Boolean).join("\n");
+    return u.whole || "";
+  }
+  function essayFormHTML(q, rec) {
+    const val = essayTextOf(rec && rec.u);
     return `<textarea class="ans" rows="1" spellcheck="false">${esc(val)}</textarea>
       <div class="hint-line">提示：按要点写出答案，系统将对照参考答案的 ${q.points.length} 个得分点，按关键词覆盖度自动打分（≥50% 视为命中该要点）。</div>`;
   }
 
   // 整题作答文本框高度随内容自适应（最低一行由 CSS min-height 兜底）；+2 补上下 1px 边框（box-sizing: border-box）
   function autoGrow(ta) { if (ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; } }
-  function mountEssayForm(card, q, mode, rec) {
-    $(".essay-form", card).innerHTML = essayFormHTML(q, mode, rec);
+  function mountEssayForm(card, q, rec) {
+    $(".essay-form", card).innerHTML = essayFormHTML(q, rec);
     autoGrow($("textarea.ans", card));
   }
 
@@ -427,10 +423,7 @@
     qs.forEach((q) => {
       const card = $(`.card[data-id="${q.id}"]`, list);
       if (!card) return;
-      if (q.type === "essay") {
-        const mode = store[q.id] && store[q.id].u && store[q.id].u.mode || "whole";
-        mountEssayForm(card, q, mode, store[q.id]);
-      }
+      if (q.type === "essay") mountEssayForm(card, q, store[q.id]);
       bindCard(q, card);
       const rec = store[q.id];
       if (rec) {
@@ -461,11 +454,6 @@
     if (q.type === "blank") {
       return $$(".stem input.blank", card).map((i) => i.value.trim());
     }
-    const mode = $(".mode-btn.active", card).dataset.mode;
-    if (mode === "points") {
-      const pts = $$(".pinput", card).map((i) => i.value.trim());
-      return pts.every((p) => !p) ? null : { mode, points: pts };
-    }
     const whole = $("textarea.ans", card).value.trim();
     return whole ? { mode: "whole", whole } : null;
   }
@@ -479,14 +467,6 @@
       const r = G.gradeBlanks(input, q);
       return { s: r.score, per: r.per };
     }
-    if (input.mode === "points") {
-      const ctx = G.ctxFor(q.points);
-      const per = q.points.map((p, i) => {
-        const r = G.pointCoverage(p, input.points[i] || "", ctx);
-        return { text: p, cov: r.cov, segs: r.segs, state: G.stateOf(r.cov) };
-      });
-      return { s: Math.round(per.reduce((a, b) => a + b.cov, 0) / per.length * 100), per, engine: "local" };
-    }
     const r = G.gradeEssay(input.whole || "", q.points);
     return { s: r.score, per: r.per, engine: "local" };
   }
@@ -497,9 +477,7 @@
   function aiEnabled() { return !aiOff && location.protocol !== "file:"; }
   function liveCard(qid) { return document.querySelector(`.card[data-id="${qid}"]`); }
   function essayAnswerText(input) {
-    return input.mode === "points"
-      ? input.points.map((p, i) => `第${i + 1}点：${p || "（未作答）"}`).join("\n")
-      : input.whole || "";
+    return input.whole || "";
   }
   function markAIGrading(card) {
     const tag = $(".verdict .tag", card);
@@ -763,12 +741,6 @@
       $(".result", card).innerHTML = `<div class="verdict"><span class="score-big ${scoreCls(out.s)}">${out.s}</span>
         <span class="tag ${scoreCls(out.s)}">${label}</span>${badge}</div>
         <div class="point-list">${pts}</div>${refBlock(q)}`;
-      if (q.type === "essay" && $(".mode-btn.active", card)) {
-        $$(".pinput", card).forEach((el, i) => {
-          el.classList.remove("right", "wrong");
-          if (out.per && out.per[i]) el.classList.add(out.per[i].state !== "miss" ? "right" : "wrong");
-        });
-      }
     }
     $(".result", card).classList.add("show");
     armResultUI(q, card, out);
@@ -814,12 +786,13 @@
     } else if (q.type === "blank") {
       $$(".stem input.blank", card).forEach((inp, i) => (inp.value = rec.u[i] || ""));
     } else {
-      mountEssayForm(card, q, rec.u.mode, rec);
+      mountEssayForm(card, q, rec);
     }
     // 简答已有 AI 判分结果（g 字段）时直接渲染，不再重算、不打网络；否则走本机词面判分
+    // （旧版分点记录先归一为整题文本再判，避免整题分支读到空串）
     const out = q.type === "essay" && rec.g
       ? { s: rec.g.score, per: rec.g.per, engine: "ai" }
-      : grade(q, rec.u);
+      : grade(q, q.type === "essay" ? { mode: "whole", whole: essayTextOf(rec.u) } : rec.u);
     showResult(q, card, q.type === "single" ? rec.u : rec.u, out);
   }
 
@@ -851,24 +824,6 @@
         $$(".opt", card).forEach((o) => o.classList.remove("picked"));
         el.classList.add("picked");
         saveDraft(q, card);
-      }));
-    }
-    if (q.type === "essay") {
-      $$(".mode-btn", card).forEach((btn) => btn.addEventListener("click", () => {
-        const prev = store[q.id];
-        if (prev) {
-          if (prev.v) { store[q.id] = { u: null, s: null, ts: prev.ts, v: prev.v }; } // 切换作答方式只清作答，不清「看过解析」标记
-          else { delete store[q.id]; }
-          save(); renderStats(); renderChapters();
-        }
-        $$(".mode-btn", card).forEach((b) => b.classList.toggle("active", b === btn));
-        mountEssayForm(card, q, btn.dataset.mode, null);
-        $(".result", card).classList.remove("show");
-        $(".result", card).innerHTML = "";
-        const old = $(".redo-btn", card); if (old) old.remove();
-        $(".grade-btn", card).textContent = "提交评分";
-        const chip = $(".score-chip", card); if (chip) chip.remove();
-        updateBulkBar();
       }));
     }
     $(".grade-btn", card).addEventListener("click", () => {
