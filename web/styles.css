@@ -243,6 +243,9 @@ textarea.ans:focus, .stem input.blank:focus, .toolbar :focus { outline: 2px soli
 .oe-row.ok .oe-tag { background: var(--ok-soft); color: var(--ok); }
 .oe-row.no .oe-tag { background: var(--bad-soft); color: var(--bad); }
 .oe-why { font-size: 13.5px; }
+/* 解析失败：面板不消失，错误条内给「重试」——网络中断/上游超时可见、可恢复 */
+.oe-err { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 2px; padding: 8px 10px; background: var(--bad-soft); border: 1px solid #fecaca; border-radius: 10px; color: var(--bad); font-size: 13px; }
+.oe-err .oe-retry { padding: 3px 11px; font-size: 12.5px; border-radius: 7px; }
 /* AI 思考过程面板：生成中自动展开、完成默认收起；点标题手动切换展开/收起 */
 .oe-think { margin: 2px 0 8px; border: 1px solid var(--line); border-radius: 10px; background: #fafbff; overflow: hidden; }
 .oe-think-head { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 6px 10px; border: 0; background: none; cursor: pointer; font-size: 12.5px; color: var(--muted); font-family: inherit; }

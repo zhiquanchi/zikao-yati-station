@@ -55,8 +55,12 @@ const server = Bun.serve({
         }
         return new Response(await up_.text(), { status: up_.status, headers: { "content-type": ct } });
       } catch (e) {
-        return new Response(JSON.stringify({ error: "svc_down", detail: String((e && e.message) || e) }), {
-          status: 502, headers: { "content-type": "application/json" },
+        // 超时与「服务不可达」区分开：超时 504 timeout（前端提示可重试、不熔断 AI），其余仍 502 svc_down
+        const timedOut = !!e && (e.name === "TimeoutError" || e.name === "AbortError");
+        return new Response(JSON.stringify(timedOut
+          ? { error: "timeout", detail: "上游服务超时（逐项解析两级链路较长，请重试）" }
+          : { error: "svc_down", detail: String((e && e.message) || e) }), {
+          status: timedOut ? 504 : 502, headers: { "content-type": "application/json" },
         });
       }
     }

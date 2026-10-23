@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -389,24 +390,46 @@ func (g *grader) ExplainStream(ctx context.Context, r GradeReq, emit func(string
 		}
 	}
 
-	msgs := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(g.explSystemSearch()),
-		openai.UserMessage(buildExplainUser(&r, "")),
-	}
-	content, _, err := g.streamExplCall(ctx, msgs, explStage2Timeout, true, emit)
-	if err != nil {
+	// 联网级：首轮输出不可解析时先 reset 清掉已推的半截，追加格式提醒重出一次；仍失败才交 error 事件。
+	var items []ExplainItem
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		sys := g.explSystemSearch()
+		if attempt > 0 {
+			sys += explRetryNote
+		}
+		msgs := []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(sys),
+			openai.UserMessage(buildExplainUser(&r, "")),
+		}
+		content, saw, err := g.streamExplCall(ctx, msgs, explStage2Timeout, true, emit)
 		if errors.Is(err, explErrClient) {
 			return nil, err
 		}
-		return nil, classifyUpstreamErr(ctx, err)
+		if err != nil {
+			lastErr = classifyUpstreamErr(ctx, err)
+			break // 上游不可用/超时/密钥无效：重出无益
+		}
+		got, _, perr := parseExplainItems(content)
+		if perr != nil {
+			lastErr = &svcErr{502, "parse", perr.Error()}
+		} else {
+			items, lastErr = normalizeExplain(&r, got, "search")
+		}
+		if lastErr == nil {
+			break
+		}
+		if attempt == 0 { // 只重出一轮：首轮已推过的半截内容先清屏，避免残行混入重出结果
+			log.Printf("explain(stream): 联网级输出不可解析，重出一次：%v", lastErr)
+			if saw {
+				if e := emit("reset", map[string]bool{"reset": true}); e != nil {
+					return nil, explErrClient
+				}
+			}
+		}
 	}
-	got, _, perr := parseExplainItems(content)
-	if perr != nil {
-		return nil, &svcErr{502, "parse", perr.Error()}
-	}
-	items, nerr := normalizeExplain(&r, got, "search")
-	if nerr != nil {
-		return nil, nerr
+	if lastErr != nil {
+		return nil, lastErr
 	}
 	resp.Source = "search"
 	resp.Items = items

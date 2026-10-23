@@ -44,8 +44,13 @@ async function proxy(req, target, timeoutMs, allowMethods) {
     }
     return new Response(await up.text(), { status: up.status, headers: { "content-type": ct } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: "svc_down", detail: String((e && e.message) || e) }), {
-      status: 502, headers: { "content-type": "application/json" },
+    // 超时与「服务不可达」区分开：超时返回 504 timeout（前端提示可重试，不熔断整会话 AI）；
+    // 其余连接类失败仍 502 svc_down（和旧口径一致）。
+    const timedOut = !!e && (e.name === "TimeoutError" || e.name === "AbortError");
+    return new Response(JSON.stringify(timedOut
+      ? { error: "timeout", detail: "上游服务超时（逐项解析两级链路较长，请重试）" }
+      : { error: "svc_down", detail: String((e && e.message) || e) }), {
+      status: timedOut ? 504 : 502, headers: { "content-type": "application/json" },
     });
   }
 }

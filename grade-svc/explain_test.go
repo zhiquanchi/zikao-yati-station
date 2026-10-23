@@ -168,6 +168,39 @@ func TestExplainStage1Garbage(t *testing.T) {
 	}
 }
 
+// 联网级首轮输出不可解析：追加格式提醒重出一次，成功即正常返回（不再直接把 parse 错误抛给前端）。
+func TestExplainSearchParseRetry(t *testing.T) {
+	var calls []explCall
+	srv := fakeExpl(t, []string{explFoundFalse, "抱歉我讲不好", explSearchItems}, &calls)
+	defer srv.Close()
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
+	res, err := g.Explain(context.Background(), sampleExplainReq())
+	if err != nil || res.Source != "search" || len(calls) != 3 {
+		t.Fatalf("应重出一次成功：err=%v res=%+v calls=%d", err, res, len(calls))
+	}
+	msgs, _ := calls[2].body["messages"].([]any)
+	sys, _ := msgs[0].(map[string]any)
+	if sc, _ := sys["content"].(string); !strings.Contains(sc, "上一轮输出无法解析") {
+		t.Errorf("重出请求的 system 应带格式提醒：%s", calls[2].raw)
+	}
+}
+
+// 联网级连续两轮都不可解析：只重出一次，随后按 502/parse 失败（不做无限重试）。
+func TestExplainSearchParseFailTwice(t *testing.T) {
+	var calls []explCall
+	srv := fakeExpl(t, []string{explFoundFalse, "坏输出一", "坏输出二"}, &calls)
+	defer srv.Close()
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
+	_, err := g.Explain(context.Background(), sampleExplainReq())
+	var se *svcErr
+	if err == nil || !asSvcErr(err, &se) || se.Status != 502 || se.Code != "parse" {
+		t.Fatalf("两轮都坏应 502/parse：%v", err)
+	}
+	if len(calls) != 3 {
+		t.Errorf("应恰好重出一次（共 3 次上游调用），实际 %d", len(calls))
+	}
+}
+
 // 上游拒绝 enable_search 参数 → 去参重试一次成功（source 仍标 search，含义退化为模型知识）。
 func TestExplainSearchParamRejected(t *testing.T) {
 	var calls []explCall

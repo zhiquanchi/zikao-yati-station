@@ -473,7 +473,7 @@
 
   // ——— 简答 AI 判分：经同源 /api/grade 调 Go 服务（grade-svc），不可用自动降级本机估分 ———
   let aiOff = false; // 会话级熔断：服务未启动 / 未配 Key / Key 无效时不再重复请求
-  const AI_CODES = { no_key: "未配置 QWEN_API_KEY", bad_key: "API Key 无效", svc_down: "判分服务未启动", timeout: "上游超时", parse: "上游输出解析失败", upstream: "上游服务错误", bad_request: "请求参数异常", internal: "服务内部错误" };
+  const AI_CODES = { no_key: "未配置 QWEN_API_KEY", bad_key: "API Key 无效", svc_down: "判分服务未启动", timeout: "上游超时", parse: "上游输出解析失败", upstream: "上游服务错误", bad_request: "请求参数异常", internal: "服务内部错误", network: "网络中断，请检查网络后重试", incomplete: "连接中断，解析未完成，请重试" };
   function aiEnabled() { return !aiOff && location.protocol !== "file:"; }
   function liveCard(qid) { return document.querySelector(`.card[data-id="${qid}"]`); }
   function essayAnswerText(input) {
@@ -564,14 +564,25 @@
     try { localStorage.setItem(EKEY, JSON.stringify(explCache)); } catch (e) {}
   }
   function explErr(msg, code) { const e = new Error(msg || "upstream"); e.code = code || msg || "upstream"; return e; }
+  // 网络层失败归一：浏览器超时（AbortSignal.timeout）→timeout，其余 fetch 异常→network——
+  // 避免 catch 里拿到无 code 的 DOMException 后只能提示「逐项解析失败：undefined」。
+  function netErr(e) {
+    const timedOut = !!e && (e.name === "TimeoutError" || e.name === "AbortError");
+    return explErr(timedOut ? "timeout" : "network", timedOut ? "timeout" : "network");
+  }
   function validExpl(data, q) { return data && Array.isArray(data.items) && data.items.length === q.options.length; }
   async function requestExplain(q, onEvent) {
-    const res = await fetch("api/grade", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task: "explain", stream: true, stem: q.stem, options: q.options, answer: q.answer, ref: q.explain || q.ref || "" }),
-      signal: AbortSignal.timeout(95000), // 两级上游调用（资料级+联网级），预算比判分长
-    });
+    let res;
+    try {
+      res = await fetch("api/grade", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ task: "explain", stream: true, stem: q.stem, options: q.options, answer: q.answer, ref: q.explain || q.ref || "" }),
+        signal: AbortSignal.timeout(95000), // 两级上游调用（资料级+联网级），预算比判分长
+      });
+    } catch (e) {
+      throw netErr(e); // 请求没发出去/被超时中断：明确错误码，交上层展示可重试错误条
+    }
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("text/event-stream")) { // 非流式应答兜底（未升级的旧服务等；错误体也走这里）
       const data = await res.json().catch(() => null);
@@ -583,7 +594,7 @@
     return data;
   }
   // readExplSSE：读 SSE 帧并分发 reason/delta/reset 给 onEvent；done 整包 resolve、error 带 code reject。
-  // 流断（网络断开/超时 abort 后余帧）未等到 done → 按 upstream 失败处理。
+  // 流断（网络断开/超时 abort 后余帧）未等到 done → 按连接中断（incomplete）失败处理，界面可重试。
   function readExplSSE(body, onEvent) {
     return new Promise((resolve, reject) => {
       const reader = body.getReader(), dec = new TextDecoder();
@@ -612,8 +623,8 @@
             onEvent(ev, payload);
           }
         }
-        if (!settled) bad(explErr("upstream"));
-      })().catch((e) => bad(e));
+        if (!settled) bad(explErr("incomplete", "incomplete"));
+      })().catch((e) => bad(e && e.code ? e : netErr(e)));
     });
   }
   function thinkPanelHTML(think, live) {
@@ -636,10 +647,11 @@
   // 流式渲染：reason 事件流式展示思考过程（生成中保持展开，用户可点标题手动收起/展开；
   // done 后整包重排默认收起）；delta 事件逐选项落行（行按到达序出现，done 整包整形后重排并标注对错）；
   // reset ＝ 资料级输出被弃用转联网，清回生成头（思考面板一并清空重建）。dataset.live 同时驱动光标样式。
-  function startExplLive(body) {
+  // 点按钮即调用（不等首个 delta）——长等待期先给可见「生成中」，避免点了像没反应。
+  function startExplLive(body, head) {
     body.dataset.live = "1";
     body.__think = "";
-    body.innerHTML = '<div class="oe-head">🤖 逐项解析生成中…</div>';
+    body.innerHTML = `<div class="oe-head">${head || "🤖 逐项解析生成中…"}</div>`;
     body.classList.add("show");
   }
   function explLiveReason(body, text) {
@@ -665,39 +677,59 @@
     const why = $(".oe-why", row);
     why.textContent += text;
   }
+  // 失败呈现（不再「toast 后一片空白」）：错误条 + 重试按钮；有旧结果则先回滚旧结果再挂错误条。
+  function oeErrRow(msg) {
+    return `<div class="oe-err"><span>⚠ ${esc(msg)}</span><button class="secondary oe-retry" type="button">重试</button></div>`;
+  }
+  function renderExplError(body, msg) {
+    delete body.dataset.live;
+    body.classList.add("show");
+    body.innerHTML = `<div class="oe-head">🤖 逐项解析失败</div>` + oeErrRow(msg);
+  }
   function wireOptExpl(q, btn, body) {
-    const cached = explCache[q.id];
+    let cached = explCache[q.id];
     if (cached && Array.isArray(cached.items)) {
       renderOptExpl(body, cached);
       btn.textContent = "🤖 重新逐项解析";
     }
-    body.addEventListener("click", (e) => { // 思考面板手动展开/收起（事件委托：面板随 innerHTML 重建）
-      const head = e.target.closest && e.target.closest(".oe-think-head");
-      if (head) head.parentNode.classList.toggle("collapsed");
+    body.addEventListener("click", (e) => { // 事件委托（面板随 innerHTML 重建）：思考折叠 + 失败重试
+      const t = e.target;
+      if (!t || !t.closest) return;
+      const head = t.closest(".oe-think-head");
+      if (head) { head.parentNode.classList.toggle("collapsed"); return; }
+      if (t.closest(".oe-retry")) run();
     });
-    btn.addEventListener("click", async () => {
+    async function run() {
       if (btn.disabled) return;
       btn.disabled = true;
       btn.textContent = "🤖 逐项解析生成中…（可能要联网）";
+      startExplLive(body); // 立即落生成头：等待首个 delta / 联网检索期间不再是空白
       try {
         const data = await requestExplain(q, (ev, p) => {
           if (ev === "delta") explLiveDelta(body, p.key, p.text);
           else if (ev === "reason") explLiveReason(body, p.text);
-          else if (ev === "reset") startExplLive(body);
+          else if (ev === "reset") startExplLive(body, "🤖 资料未覆盖，正在联网补充…");
         });
         saveExplCache(q.id, data);
+        cached = data;
         renderOptExpl(body, data);
         btn.textContent = "🤖 重新逐项解析";
       } catch (e) {
         if (e.code === "svc_down" || e.code === "no_key" || e.code === "bad_key") aiOff = true; // 与简答判分共用熔断
-        if (cached && Array.isArray(cached.items)) renderOptExpl(body, cached); // 失败回滚到旧完整结果，不留半截
-        else if (body.dataset.live) { delete body.dataset.live; body.classList.remove("show"); body.innerHTML = ""; }
-        btn.textContent = "🤖 逐项解析";
-        toast("逐项解析失败：" + (AI_CODES[e.code] || e.code));
+        const msg = AI_CODES[e.code] || "服务暂时不可用，请稍后重试";
+        if (cached && Array.isArray(cached.items)) { // 回滚旧完整结果，附错误条（可点重试）
+          renderOptExpl(body, cached);
+          body.insertAdjacentHTML("beforeend", oeErrRow(msg));
+        } else {
+          renderExplError(body, msg); // 没有旧结果也保留面板：错误条 + 重试，不清空消失
+        }
+        btn.textContent = cached && Array.isArray(cached.items) ? "🤖 重新逐项解析" : "🤖 逐项解析";
+        toast("逐项解析失败：" + msg);
       } finally {
         btn.disabled = false;
       }
-    });
+    }
+    btn.addEventListener("click", run);
   }
 
   function flash(card, msg) {

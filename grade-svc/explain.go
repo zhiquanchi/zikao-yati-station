@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -22,6 +23,8 @@ const (
 	explStage1Timeout = 30 * time.Second
 	explStage2Timeout = 50 * time.Second
 	explWhyMaxRunes   = 160
+	// explRetryNote 是联网级「首轮输出无法解析为约定 JSON」时重出一次的追加提醒（只强调格式，不改题目口径）。
+	explRetryNote = "\n注意：上一轮输出无法解析为约定 JSON。本轮务必只输出这一个 JSON 对象，不要任何解释文字，不要 markdown 代码块。"
 )
 
 // Opt 是单选题的一个选项。
@@ -231,7 +234,9 @@ func explainCacheKey(r GradeReq) string {
 
 // Explain 两级链路：
 //  1. 带参考资料调用：模型判 found——资料足以解释全部选项则直接采用（source=material）；
-//  2. found=false 或第一级任何失败 → 带 enable_search 重新生成全选项解释（source=search）。
+//  2. found=false 或第一级任何失败 → 带 enable_search 重新生成全选项解释（source=search）；
+//     联网级输出不可解析（模型偶然吐闲话/半截 JSON）时，追加格式提醒重出一次，仍失败才报 parse。
+//
 // 科目无参考资料（SUBJECT_DIR 下无 reference.md）则直接走第二级。
 func (g *grader) Explain(ctx context.Context, r GradeReq) (*ExplainResp, error) {
 	if err := r.validateExplain(); err != nil {
@@ -268,21 +273,37 @@ func (g *grader) Explain(ctx context.Context, r GradeReq) (*ExplainResp, error) 
 	}
 
 	if resp.Source == "" {
-		msgs := []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(g.explSystemSearch()),
-			openai.UserMessage(buildExplainUser(&r, "")),
+		var items []ExplainItem
+		var lastErr error
+		for attempt := 0; attempt < 2; attempt++ { // 首轮输出不可解析：加格式提醒重出一次（网络/密钥类错误不重试）
+			sys := g.explSystemSearch()
+			if attempt > 0 {
+				sys += explRetryNote
+			}
+			msgs := []openai.ChatCompletionMessageParamUnion{
+				openai.SystemMessage(sys),
+				openai.UserMessage(buildExplainUser(&r, "")),
+			}
+			content, err := g.callExplain(ctx, msgs, explStage2Timeout, true)
+			if err != nil {
+				lastErr = classifyUpstreamErr(ctx, err)
+				break // 上游不可用/超时/密钥无效：重出无益，直接失败
+			}
+			got, _, perr := parseExplainItems(content)
+			if perr != nil {
+				lastErr = &svcErr{502, "parse", perr.Error()}
+			} else {
+				items, lastErr = normalizeExplain(&r, got, "search")
+			}
+			if lastErr == nil {
+				break
+			}
+			if attempt == 0 {
+				log.Printf("explain: 联网级输出不可解析，重出一次：%v", lastErr)
+			}
 		}
-		content, err := g.callExplain(ctx, msgs, explStage2Timeout, true)
-		if err != nil {
-			return nil, classifyUpstreamErr(ctx, err)
-		}
-		got, _, perr := parseExplainItems(content)
-		if perr != nil {
-			return nil, &svcErr{502, "parse", perr.Error()}
-		}
-		items, nerr := normalizeExplain(&r, got, "search")
-		if nerr != nil {
-			return nil, nerr
+		if lastErr != nil {
+			return nil, lastErr
 		}
 		resp.Source = "search"
 		resp.Items = items

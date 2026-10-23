@@ -351,6 +351,61 @@ func TestExplainStreamStage1Garbage(t *testing.T) {
 	}
 }
 
+// 联网级首轮输出不可解析：追加格式提醒重出一次；重出成功时仍走流式并正常 done。
+func TestExplainStreamSearchParseRetry(t *testing.T) {
+	var calls []explCall
+	srv := fakeExplStream(t, [][]string{
+		splitRunes(explFoundFalse, 4),  // 资料级 found=false → 联网级
+		{"抱歉我讲不好"},                     // 联网级首轮：闲话、无法解析
+		splitRunes(explSearchItems, 4), // 重出成功
+	}, &calls)
+	defer srv.Close()
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
+	var post strings.Builder
+	resets := 0
+	res, err := g.ExplainStream(context.Background(), sampleExplainReq(), func(ev string, data any) error {
+		if ev == "reset" {
+			resets++
+			return nil
+		}
+		if d, ok := data.(explDelta); ok && resets > 0 { // 只看 reset 后的联网级增量
+			post.WriteString(d.Text)
+		}
+		return nil
+	})
+	if err != nil || res.Source != "search" || len(calls) != 3 {
+		t.Fatalf("应重出一次成功：err=%v res=%+v calls=%d", err, res, len(calls))
+	}
+	msgs, _ := calls[2].body["messages"].([]any)
+	sys, _ := msgs[0].(map[string]any)
+	if sc, _ := sys["content"].(string); !strings.Contains(sc, "上一轮输出无法解析") {
+		t.Errorf("重出请求的 system 应带格式提醒")
+	}
+	if !strings.Contains(post.String(), "搜到资料佐证") {
+		t.Errorf("重出成功后应继续流联网级文案：%q", post.String())
+	}
+}
+
+// 联网级连续两轮不可解析：只重出一次 → 502/parse（HTTP 层由 error 事件带给前端）。
+func TestExplainStreamSearchParseFailTwice(t *testing.T) {
+	var calls []explCall
+	srv := fakeExplStream(t, [][]string{
+		splitRunes(explFoundFalse, 4),
+		{"坏输出一"},
+		{"坏输出二"},
+	}, &calls)
+	defer srv.Close()
+	g := newGrader("sk-test", srv.URL, "", subjWithRef())
+	_, err := g.ExplainStream(context.Background(), sampleExplainReq(), (&evLog{}).emit)
+	var se *svcErr
+	if err == nil || !asSvcErr(err, &se) || se.Status != 502 || se.Code != "parse" {
+		t.Fatalf("两轮都坏应 502/parse：%v", err)
+	}
+	if len(calls) != 3 {
+		t.Errorf("应恰好重出一次（共 3 次上游调用），实际 %d", len(calls))
+	}
+}
+
 // 上游拒绝 enable_search → 去参重试一次成功（与非流式同策略）。
 func TestExplainStreamSearchParamRejected(t *testing.T) {
 	var calls []explCall

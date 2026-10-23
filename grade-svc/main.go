@@ -62,7 +62,13 @@ func newMux(g *grader) *http.ServeMux {
 		var res any
 		var err error
 		if req.Task == "explain" {
+			start := time.Now() // 失败原因只进容器日志（前端只拿错误码），便于事后定位「点了解析没结果」
 			res, err = g.Explain(ctx, req)
+			if err != nil {
+				log.Printf("explain 失败（%s）：%v", time.Since(start).Round(time.Millisecond), err)
+			} else if r, ok := res.(*ExplainResp); ok {
+				log.Printf("explain 完成（%s）：source=%s items=%d cached=%v", time.Since(start).Round(time.Millisecond), r.Source, len(r.Items), r.Cached)
+			}
 		} else {
 			res, err = g.Grade(ctx, req)
 		}
@@ -103,11 +109,13 @@ func streamExplain(w http.ResponseWriter, g *grader, ctx context.Context, req Gr
 		}
 		return nil
 	}
+	start := time.Now()
 	resp, err := g.ExplainStream(ctx, req, emit)
 	if err != nil {
 		if errors.Is(err, explErrClient) {
 			return // 客户端已断开，无从再写
 		}
+		log.Printf("explain[stream] 失败（%s）：%v", time.Since(start).Round(time.Millisecond), err)
 		var se *svcErr
 		if errors.As(err, &se) {
 			_ = emit("error", map[string]string{"error": se.Code, "detail": se.Detail})
@@ -116,6 +124,7 @@ func streamExplain(w http.ResponseWriter, g *grader, ctx context.Context, req Gr
 		}
 		return
 	}
+	log.Printf("explain[stream] 完成（%s）：source=%s items=%d cached=%v", time.Since(start).Round(time.Millisecond), resp.Source, len(resp.Items), resp.Cached)
 	_ = emit("done", resp)
 }
 
