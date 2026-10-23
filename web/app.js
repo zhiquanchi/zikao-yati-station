@@ -10,6 +10,7 @@
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const TYPE_CN = { single: "单选", blank: "填空", essay: "简答" };
+  const RECITE = window.RECITE; // 重点优先背的纯排序模块（web/recite.js；科目 flags.recite 开启时才启用）
 
   // 云同步首拉合并：await 之后才装载 store/shuf（file:// 或超时自动降级纯本机，绝不阻塞渲染）
   if (window.SYNC) await window.SYNC.prefetch(KEY, ID.user());
@@ -17,6 +18,8 @@
   let store = load();
   let filters = { chapter: "all", type: "all", status: "all", search: "" };
   let shuffle = false, showRef = false;
+  // 重点优先背弹层状态：all＝按薄弱程度排好的全队列，list＝当前分组/题型筛选后的可见队列
+  const recite = { all: [], list: [], idx: 0, group: "all", type: "all" };
   const QBYID = Object.fromEntries(D.questions.map((q) => [q.id, q]));
 
   // 判分口径升级迁移：已判分的填空记录用当前引擎重算（含 unordered 跨空匹配），
@@ -231,6 +234,7 @@
       `<span class="stat">60分以上 <b>${good}</b></span>` +
       `<span class="stat">未练 <b>${total - done}</b></span>`;
     $(".progress-bar", ensureTrack()).style.width = (done / total * 100).toFixed(1) + "%";
+    updateReciteEntry(); // 顶栏「重点优先背」角标跟着掌握情况走
   }
 
   function renderChapters() {
@@ -243,6 +247,196 @@
     });
     sel.innerHTML = opts.join("");
     sel.value = filters.chapter;
+  }
+
+  // ——— 重点优先背 ———
+  // 「没掌握」＝首次评分 <80（含未作答）；排序纯函数在 web/recite.js（答错→待提高→未作答，
+  // 同档简答/填空先背，未作答中看过解析的优先）。全屏逐题背、答案与得分点直接展开；
+  // 「去练这道题」回主列表定位作答，≥80 分后自动移出队列。科目由 flags.recite 开启（subject.json→meta）。
+  function reciteEnabled() { return !!(D.meta.flags && D.meta.flags.recite) && !!RECITE; }
+  function reciteAll() { return RECITE.build(D.questions, store); }
+  function updateReciteEntry() {
+    const btn = $("#reciteEntry");
+    if (!reciteEnabled()) { if (btn) btn.remove(); return; } // 未开启的科目不注入入口
+    if (!btn) return;
+    const n = reciteAll().length;
+    $("#reciteCount").textContent = n;
+    btn.style.display = "";
+    btn.classList.toggle("zero", n === 0);
+    btn.title = n ? `按答题记录找出 ${n} 道未掌握题，按薄弱程度逐题背` : "全部题目已掌握，暂无重点背题";
+  }
+  function reciteOpen() {
+    if (!reciteEnabled()) return;
+    recite.all = reciteAll();
+    recite.group = "all"; recite.type = "all"; recite.idx = 0;
+    $("#reciteSub").textContent = `${D.meta.name} · 按答题记录找出未掌握题，薄弱优先`;
+    reciteRenderFilters();
+    reciteApply();
+    const dlg = $("#reciteDialog");
+    if (dlg && !dlg.open) dlg.showModal();
+    const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+  }
+  function reciteApply() {
+    recite.list = RECITE.filter(recite.all, { group: recite.group, type: recite.type });
+    if (recite.idx >= recite.list.length) recite.idx = Math.max(0, recite.list.length - 1);
+    reciteRenderQueue();
+    reciteRenderCard();
+    reciteRenderNav();
+  }
+  function reciteRenderFilters() {
+    const c = RECITE.counts(recite.all);
+    const groups = [["all", "全部未掌握", c.total], ["wrong", "❌ 答错", c.wrong], ["mid", "⚠️ 待提高 60~79", c.mid], ["todo", "⬜ 未作答", c.todo]];
+    $("#reciteGroupChips").innerHTML = groups.map(([g, label, n]) =>
+      `<button type="button" class="chip${recite.group === g ? " active" : ""}" data-group="${g}">${label} ${n}</button>`).join("");
+    const byGroup = RECITE.counts(RECITE.filter(recite.all, { group: recite.group }));
+    const types = [["all", "全部题型", byGroup.total], ["single", "单选", byGroup.single], ["blank", "填空", byGroup.blank], ["essay", "简答", byGroup.essay]];
+    $("#reciteTypeChips").innerHTML = types.map(([t, label, n]) =>
+      `<button type="button" class="chip${recite.type === t ? " active" : ""}" data-type="${t}">${label} ${n}</button>`).join("");
+    const total = D.questions.length;
+    $("#reciteSummary").innerHTML = recite.all.length
+      ? `<span class="rs-item">未掌握 <b>${c.total}</b> / ${total}</span>` +
+        `<span class="rs-item wrong">答错 <b>${c.wrong}</b></span>` +
+        `<span class="rs-item mid">待提高 <b>${c.mid}</b></span>` +
+        `<span class="rs-item todo">未作答 <b>${c.todo}</b></span>` +
+        `<span class="rs-tip">排序：答错（分低在前）→ 待提高（60~79）→ 未作答；同档简答/填空先背，未作答中看过解析的优先。</span>`
+      : `<span class="rs-ok">🎉 全部 ${total} 题已掌握（≥80 分），暂时没有需要重点背的题。</span>`;
+  }
+  function reciteRenderQueue() {
+    const box = $("#reciteQueue");
+    $("#reciteQueueCount").textContent = `${recite.list.length} 题`;
+    if (!recite.list.length) { box.innerHTML = `<li class="recite-q-empty">当前筛选下没有题目</li>`; return; }
+    box.innerHTML = recite.list.map((it, i) => {
+      const q = QBYID[it.id];
+      return `<li class="recite-q-item${i === recite.idx ? " active" : ""}" data-i="${i}">` +
+        `<span class="rq-no">${i + 1}</span><span class="rq-stem">${esc(q.stem)}</span>` +
+        `<span class="rq-tag ${it.group}">${it.score != null ? it.score + "分" : "未答"}</span></li>`;
+    }).join("");
+    const active = $(".recite-q-item.active", box);
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+  }
+  // 填空题背题态：横线位置直接填上应背答案（多空按 blanks 顺序；异常数据回落 ?）
+  function reciteBlankStem(q) {
+    const blanks = Array.isArray(q.blanks) ? q.blanks : [];
+    const parts = q.stem.split(/_{2,}/);
+    let out = "";
+    parts.forEach((p, i) => {
+      out += esc(p);
+      if (i < parts.length - 1) out += `<b class="recite-blank">${esc((blanks[i] && blanks[i][0]) || "?")}</b>`;
+    });
+    return out;
+  }
+  function reciteRenderCard() {
+    const box = $("#reciteCard");
+    if (!recite.list.length) {
+      box.innerHTML = `<div class="recite-empty">` + (recite.all.length
+        ? "当前筛选下没有题目，换个分组或题型看看。"
+        : "🎉 全部题目已掌握（≥80 分），去随机组卷检验一下吧。") + `</div>`;
+      return;
+    }
+    const it = recite.list[recite.idx], q = QBYID[it.id];
+    const rec = store[it.id];
+    const graded = !!(rec && rec.s != null); // 已判分题去练要先「重做此题」，否则提交只提示作答
+    const tags = [`<span class="rcard-tag ${it.group}">${it.score != null ? RECITE.labelOf(it.group) + " · " + it.score + " 分" : "未作答"}</span>`];
+    if (it.viewed) tags.push('<span class="rcard-v">👀 看过解析</span>');
+    if (it.draft) tags.push('<span class="rcard-draft">📝 有草稿未提交</span>');
+    let body = "";
+    if (q.type === "single") {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      body = `<div class="opts recite-opts">` + opts.map((o) =>
+        `<div class="opt${o.key === q.answer ? " right" : ""}"><span class="key">${o.key}</span><span>${esc(o.text)}</span>` +
+        (o.key === q.answer ? '<span class="opt-ans ok">✓ 正确答案</span>' : "") + `</div>`).join("") + `</div>` +
+        `<div class="rcard-ans">✅ 正确答案：<b>${esc(q.answer)}</b> · ${esc((opts.find((o) => o.key === q.answer) || {}).text || "")}</div>`;
+      if (q.explain || q.ref) body += `<div class="explain show">${explainHTML(q, { noAI: true })}</div>`;
+    } else if (q.type === "blank") {
+      const blanks = Array.isArray(q.blanks) ? q.blanks : [];
+      body = `<div class="stem">${reciteBlankStem(q)}</div>` +
+        `<div class="rcard-ans">✅ 应填：${blanks.map((v) => `<b>${esc((v && v[0]) || "")}</b>`).join("、")}${q.unordered ? ' <span class="pi-tip">（并列各空，顺序可互换）</span>' : ""}</div>`;
+      if (q.explain) body += `<div class="explain show">${explainHTML(q, { noAI: true, noAns: true })}</div>`; // 无手写解析时不重复参考答案（应填已展示）
+    } else {
+      const pts = Array.isArray(q.points) ? q.points : [];
+      body = pts.length
+        ? `<div class="rcard-points"><h4>🎯 得分点（${pts.length} 条，背加粗关键词）</h4><ol>` +
+          pts.map((p, i) => `<li>${rich(pointTexts(q, i, p), q)}</li>`).join("") + `</ol></div>`
+        : q.ref ? `<div class="rcard-ans">✅ 参考答案：${esc(q.ref)}</div>` : ""; // 通用开关：未来科目缺 points 时回落整段答案
+      if (q.explain) body += `<div class="explain show">${explainHTML(q, { noAI: true, noPts: true })}</div>`;
+      if (q.ref) body += `<details class="rcard-ref"><summary>📄 完整参考答案</summary><p>${esc(q.ref)}</p></details>`;
+    }
+    box.innerHTML = `<article class="rcard" data-id="${q.id}">
+      <div class="rcard-head"><span class="qno">第 ${recite.idx + 1} 题 · 原题 #${q.id}</span>
+        <span class="badge ${q.type}">${TYPE_CN[q.type]}</span><span class="chap">${esc(q.chapter)}</span>${tags.join("")}</div>
+      ${body}
+      <div class="rcard-actions"><button type="button" class="primary" id="recitePractice">✍ 去练这道题</button>
+        <span class="rcard-tip">${graded ? "已判过分：去练时先点「重做此题」再提交，新一次评分才计入掌握。" : "背熟后去练一遍：≥80 分即从「重点优先背」队列移除。"}</span></div>
+    </article>`;
+  }
+  function reciteRenderNav() {
+    const n = recite.list.length;
+    $("#recitePos").innerHTML = n ? `第 <b>${recite.idx + 1}</b> / ${n} 题` : "—";
+    $("#recitePrev").disabled = !n || recite.idx <= 0;
+    $("#reciteNext").disabled = !n || recite.idx >= n - 1;
+  }
+  function reciteStep(delta) {
+    if (!recite.list.length) return;
+    const next = Math.max(0, Math.min(recite.list.length - 1, recite.idx + delta));
+    if (next === recite.idx) return;
+    recite.idx = next;
+    reciteRenderQueue(); reciteRenderCard(); reciteRenderNav();
+    const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+  }
+  // 去练这道题：关弹层、清筛选/组卷（保证题目一定在列表里可见），定位到题卡
+  function recitePractice() {
+    const it = recite.list[recite.idx];
+    if (!it) return;
+    const dlg = $("#reciteDialog");
+    if (dlg && dlg.open) dlg.close();
+    if (shuffle) {
+      shuffle = false;
+      const sb = $("#shuffleBox"); if (sb) sb.checked = false;
+      clearShuffle();
+      const sa = $("#shuffleAgain"); if (sa) sa.style.display = "none";
+    }
+    filters = { chapter: "all", type: "all", status: "all", search: "" };
+    const cs = $("#chapterSel"); if (cs) cs.value = "all";
+    $$("#typeChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.type === "all"));
+    $$("#statusChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.status === "all"));
+    const sb2 = $("#searchBox"); if (sb2) sb2.value = "";
+    renderList();
+    const card = document.querySelector(`.card[data-id="${it.id}"]`);
+    if (card) card.scrollIntoView({ block: "center" });
+    const graded = !!(store[it.id] && store[it.id].s != null);
+    toast(graded ? "已定位到这道题：已判分，先点「重做此题」再提交（新一次评分才计入掌握）" : "已定位到这道题：答一遍检验，≥80 分即移出重点背队列");
+  }
+  function bindRecite() {
+    if (!reciteEnabled()) { const b = $("#reciteEntry"); if (b) b.remove(); return; }
+    const entry = $("#reciteEntry");
+    if (entry) entry.addEventListener("click", reciteOpen);
+    const dlg = $("#reciteDialog");
+    if (!dlg) return;
+    $("#reciteClose").addEventListener("click", () => dlg.close());
+    $("#recitePrev").addEventListener("click", () => reciteStep(-1));
+    $("#reciteNext").addEventListener("click", () => reciteStep(1));
+    $("#reciteGroupChips").addEventListener("click", (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      recite.group = b.dataset.group; recite.idx = 0;
+      reciteRenderFilters(); reciteApply();
+    });
+    $("#reciteTypeChips").addEventListener("click", (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      recite.type = b.dataset.type; recite.idx = 0;
+      reciteRenderFilters(); reciteApply();
+    });
+    $("#reciteQueue").addEventListener("click", (e) => {
+      const li = e.target.closest(".recite-q-item"); if (!li) return;
+      recite.idx = +li.dataset.i;
+      reciteRenderQueue(); reciteRenderCard(); reciteRenderNav();
+      const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+    });
+    $("#reciteCard").addEventListener("click", (e) => { if (e.target.closest("#recitePractice")) recitePractice(); });
+    // 左右方向键翻题（弹层内无输入框；Esc 由 <dialog> 原生关闭）
+    dlg.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); reciteStep(-1); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); reciteStep(1); }
+    });
   }
 
   // ——— 题目过滤与列表 ———
@@ -364,24 +558,27 @@
     }
     return out;
   }
-  function explainHTML(q) {
+  // opts.noAI：不渲染「逐项解析」按钮（重点优先背等静态展示场景）；noAns：不重复「应填」；
+  // noPts：不重复简答得分点列表（背题卡已单列）。缺省与旧行为一致。
+  function explainHTML(q, opts) {
+    opts = opts || {};
     const text = q.explain || q.ref || "";
     let body = text, header = null;
     const m = text.match(/^考点\s*([^：:]{1,48}?)\s*[：:]\s*/);
     if (m) { header = m[1]; body = text.slice(m[0].length); }
     let html = "";
     if (header) html += `<div class="ex-tag">📍 考点 ${esc(header)}</div>`;
-    if (q.type === "blank") html += `<div class="ex-ans">应填：${q.blanks.map((v) => `<b>${esc(v[0])}</b>`).join("、")}${q.unordered ? ' <span class="pi-tip">（并列各空，顺序可互换）</span>' : ""}</div>`;
+    if (q.type === "blank" && !opts.noAns) html += `<div class="ex-ans">应填：${q.blanks.map((v) => `<b>${esc(v[0])}</b>`).join("、")}${q.unordered ? ' <span class="pi-tip">（并列各空，顺序可互换）</span>' : ""}</div>`;
     const items = splitItems(body);
     html += `<ul class="ex-list">` + items.map((it) => {
       const cleaned = it.replace(/^（\d+）|^\(\d+\)|^\d+、/, "").trim();
       return `<li>${rich(cleaned, q)}</li>`;
     }).join("") + `</ul>`;
-    if (q.type === "essay" && q.points && q.points.length) {
+    if (q.type === "essay" && q.points && q.points.length && !opts.noPts) {
       html += `<div class="ex-pts"><h5>✅ 得分点（${q.points.length} 条，答出加粗关键词即得分）</h5><ol>` +
         q.points.map((p, i) => `<li>${rich(pointTexts(q, i, p), q)}</li>`).join("") + `</ol></div>`;
     }
-    if (q.type === "single" && aiEnabled() && D.meta.flags.explain) { // file://、AI 熔断或科目未开启 explain 特性时不提供逐项解析入口
+    if (q.type === "single" && !opts.noAI && aiEnabled() && D.meta.flags.explain) { // file://、AI 熔断或科目未开启 explain 特性时不提供逐项解析入口
       html += `<div class="optexpl"><button class="secondary optexpl-btn" type="button">🤖 逐项解析</button><div class="optexpl-body"></div></div>`;
     }
     return html;
@@ -1009,6 +1206,7 @@
   $("#shuffleBox").checked = shuffle;
   $("#shuffleAgain").style.display = shuffle ? "" : "none";
   bindToolbar();
+  bindRecite(); // 科目 flags.recite 开启时才注入顶栏入口（未开启自动移除）
   // ——— 多用户身份：点顶栏云同步芯片开弹层（看码/复制/输码切换/一键迁移）———
   (function identityUI() {
     const chip = $("#syncChip"), dlg = $("#idDialog");

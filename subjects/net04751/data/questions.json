@@ -9,7 +9,8 @@
   "pageTitle": "2026年10月自考 04751 计算机网络安全 · 押题练习",
   "storageKey": "netsec04751.v1",
   "flags": {
-   "explain": true
+   "explain": true,
+   "recite": true
   },
   "paper": {
    "target": 100,
