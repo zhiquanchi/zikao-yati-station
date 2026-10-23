@@ -638,10 +638,11 @@
       : '<span class="oe-src search">🔍 联网搜索补充</span>';
     delete body.dataset.live;
     const think = body.__think || "";
+    // 标签按「是否本题答案」而不按「选项表述对错」：否定式题干（不正确的是/不属于）下后者会读反。
     body.innerHTML = `<div class="oe-head">逐项解析 ${chip}</div>` + (think ? thinkPanelHTML(think, false) : "") +
       data.items.map((it) =>
       `<div class="oe-row ${it.correct ? "ok" : "no"}"><span class="oe-key">${esc(it.key)}</span>` +
-      `<span class="oe-tag">${it.correct ? "✓ 正确项" : "✗ 错误项"}</span><span class="oe-why">${esc(it.why)}</span></div>`).join("");
+      `<span class="oe-tag">${it.correct ? "✓ 本题答案" : "✗ 非本题答案"}</span><span class="oe-why">${esc(it.why)}</span></div>`).join("");
     body.classList.add("show");
   }
   // 流式渲染：reason 事件流式展示思考过程（生成中保持展开，用户可点标题手动收起/展开；

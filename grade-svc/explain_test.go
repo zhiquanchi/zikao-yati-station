@@ -277,6 +277,19 @@ func TestExplainNormalize(t *testing.T) {
 	}
 }
 
+// 逐项解析 prompt 口径：解释围绕「是不是本题答案」而非「选项表述对错」，且明确覆盖否定式题干，
+// 与前端标签「✓ 本题答案 / ✗ 非本题答案」同义（「不正确的是/不属于」类题不再出现读反的讲解）。
+func TestExplainPromptWording(t *testing.T) {
+	g := newGrader("sk-test", "http://127.0.0.1:1", "", subjWithRef())
+	for name, sys := range map[string]string{"ref": g.explSystemRef(), "search": g.explSystemSearch()} {
+		for _, want := range []string{"为什么是本题答案", "为什么不是本题答案", "不正确的是", "不属于"} {
+			if !strings.Contains(sys, want) {
+				t.Errorf("%s prompt 缺少口径关键词 %q", name, want)
+			}
+		}
+	}
+}
+
 func TestExplainValidatesRequest(t *testing.T) {
 	g := newGrader("sk-test", "http://127.0.0.1:1", "", testSubject())
 	bad := sampleExplainReq()
