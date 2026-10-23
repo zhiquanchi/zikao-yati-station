@@ -18,8 +18,9 @@
   let store = load();
   let filters = { chapter: "all", type: "all", status: "all", search: "" };
   let shuffle = false, showRef = false;
-  // 重点优先背弹层状态：all＝按薄弱程度排好的全队列，list＝当前分组/题型筛选后的可见队列
-  const recite = { all: [], list: [], idx: 0, group: "all", type: "all" };
+  // 重点优先背弹层状态：all＝按薄弱程度排好的全队列，list＝当前分组/题型筛选后的可见队列；
+  // mode＝back（背题卡）| practice（当前页内作答），result＝提交后的成绩展示（不跳转主列表）
+  const recite = { all: [], list: [], idx: 0, group: "all", type: "all", mode: "back", result: null, oldScore: null };
   const QBYID = Object.fromEntries(D.questions.map((q) => [q.id, q]));
 
   // 判分口径升级迁移：已判分的填空记录用当前引擎重算（含 unordered 跨空匹配），
@@ -252,7 +253,8 @@
   // ——— 重点优先背 ———
   // 「没掌握」＝首次评分 <80（含未作答）；排序纯函数在 web/recite.js（答错→待提高→未作答，
   // 同档简答/填空先背，未作答中看过解析的优先）。全屏逐题背、答案与得分点直接展开；
-  // 「去练这道题」回主列表定位作答，≥80 分后自动移出队列。科目由 flags.recite 开启（subject.json→meta）。
+  // 「开始/重做并练习」在当前背题页内联作答（不跳主列表），提交后原地出分并更新掌握与队列。
+  // 科目由 flags.recite 开启（subject.json→meta）。
   function reciteEnabled() { return !!(D.meta.flags && D.meta.flags.recite) && !!RECITE; }
   function reciteAll() { return RECITE.build(D.questions, store); }
   function updateReciteEntry() {
@@ -267,6 +269,7 @@
   }
   function reciteOpen() {
     if (!reciteEnabled()) return;
+    reciteLeavePractice();
     recite.all = reciteAll();
     recite.group = "all"; recite.type = "all"; recite.idx = 0;
     $("#reciteSub").textContent = `${D.meta.name} · 按答题记录找出未掌握题，薄弱优先`;
@@ -325,8 +328,60 @@
     });
     return out;
   }
+  // ——— 当前页内练习：表单（复用 collect/grade/首次评分/重做语义，答题不跳转） ———
+  function recitePracticeForm(q, draftRec) {
+    let body = "";
+    if (q.type === "single") {
+      const picked = draftRec && typeof draftRec.u === "string" ? draftRec.u : null;
+      const opts = Array.isArray(q.options) ? q.options : [];
+      body = `<div class="opts">` + opts.map((o) =>
+        `<div class="opt${o.key === picked ? " picked" : ""}" data-key="${o.key}"><span class="key">${o.key}</span><span>${esc(o.text)}</span></div>`).join("") + `</div>`;
+    } else if (q.type === "blank") {
+      body = `<div class="stem">${stemHTML(q)}</div>`;
+    } else {
+      const pts = Array.isArray(q.points) ? q.points : [];
+      body = `<textarea class="ans" rows="1" spellcheck="false">${esc(essayTextOf(draftRec && draftRec.u))}</textarea>
+        <div class="hint-line">按要点写出答案，系统对照参考答案的 ${pts.length} 个得分点，按关键词覆盖度自动打分。</div>`;
+    }
+    return `<article class="rcard recite-practice" data-id="${q.id}">
+      <div class="rcard-head"><span class="qno">第 ${recite.idx + 1} 题 · 原题 #${q.id}</span>
+        <span class="badge ${q.type}">${TYPE_CN[q.type]}</span><span class="chap">${esc(q.chapter)}</span>
+        <span class="rcard-tag practice">练习中</span></div>
+      ${body}
+      <div class="rcard-actions"><button type="button" class="primary" id="reciteSubmit">提交评分</button>
+        <button type="button" class="secondary" id="reciteCancel">取消</button>
+        <span class="rcard-tip">${recite.oldScore != null
+          ? "已判分题：提交后按本次成绩重新计分（覆盖原记录），取消不写盘"
+          : "提交后计入掌握，≥80 分即移出重点背队列"}</span></div>
+    </article>`;
+  }
+  function reciteMountPractice() {
+    const card = $("#reciteCard .recite-practice");
+    const it = recite.list[recite.idx];
+    if (!card || !it) return;
+    const q = QBYID[it.id], rec = store[it.id];
+    if (q.type === "blank" && rec && Array.isArray(rec.u)) {
+      $$(".stem input.blank", card).forEach((inp, i) => (inp.value = rec.u[i] || ""));
+    }
+    if (q.type === "essay") { const ta = $("textarea.ans", card); autoGrow(ta); if (ta) ta.focus(); }
+    else if (q.type === "blank") { const inp = $(".stem input.blank", card); if (inp) inp.focus(); }
+  }
+  function reciteRenderPractice() {
+    const it = recite.list[recite.idx];
+    if (!it) return;
+    const q = QBYID[it.id];
+    // 已判分题进入「重做」：表单留空；未判分题带出已有草稿
+    const draftRec = recite.oldScore != null ? null : store[it.id];
+    $("#reciteCard").innerHTML = recitePracticeForm(q, draftRec);
+    reciteMountPractice();
+  }
   function reciteRenderCard() {
     const box = $("#reciteCard");
+    if (recite.mode === "practice") {
+      if (recite.result) { reciteRenderResult(QBYID[recite.result.id], recite.result); return; }
+      if (recite.list.length) { reciteRenderPractice(); return; }
+      reciteLeavePractice(); // 队列已空（刚掌握最后一题）：回到空态
+    }
     if (!recite.list.length) {
       box.innerHTML = `<div class="recite-empty">` + (recite.all.length
         ? "当前筛选下没有题目，换个分组或题型看看。"
@@ -335,7 +390,7 @@
     }
     const it = recite.list[recite.idx], q = QBYID[it.id];
     const rec = store[it.id];
-    const graded = !!(rec && rec.s != null); // 已判分题去练要先「重做此题」，否则提交只提示作答
+    const graded = !!(rec && rec.s != null);
     const tags = [`<span class="rcard-tag ${it.group}">${it.score != null ? RECITE.labelOf(it.group) + " · " + it.score + " 分" : "未作答"}</span>`];
     if (it.viewed) tags.push('<span class="rcard-v">👀 看过解析</span>');
     if (it.draft) tags.push('<span class="rcard-draft">📝 有草稿未提交</span>');
@@ -365,17 +420,123 @@
       <div class="rcard-head"><span class="qno">第 ${recite.idx + 1} 题 · 原题 #${q.id}</span>
         <span class="badge ${q.type}">${TYPE_CN[q.type]}</span><span class="chap">${esc(q.chapter)}</span>${tags.join("")}</div>
       ${body}
-      <div class="rcard-actions"><button type="button" class="primary" id="recitePractice">✍ 去练这道题</button>
-        <span class="rcard-tip">${graded ? "已判过分：去练时先点「重做此题」再提交，新一次评分才计入掌握。" : "背熟后去练一遍：≥80 分即从「重点优先背」队列移除。"}</span></div>
+      <div class="rcard-actions"><button type="button" class="primary" id="recitePractice">${graded ? "✍ 重做并练习" : "✍ 开始练习"}</button>
+        <span class="rcard-tip">${graded ? "已判分：在此页重新作答，提交后按本次成绩覆盖原记录（取消不写盘）" : "背熟后练一遍：≥80 分即从「重点优先背」队列移除"}</span></div>
     </article>`;
   }
+  // ——— 当前页内练习：提交评分与结果（答完不跳转，原地展示得分/逐项反馈/解析） ———
+  function reciteSubmitPractice() {
+    const it = recite.list[recite.idx];
+    if (!it) return;
+    const q = QBYID[it.id];
+    const card = $("#reciteCard .recite-practice");
+    if (!card) return;
+    const input = collect(q, card);
+    if (input == null) { toast(q.type === "single" ? "请先选择一个选项" : "请先写出你的答案"); return; }
+    if (q.type === "blank" && input.every((v) => !v)) { toast("请先填写答案"); return; }
+    const old = store[q.id];
+    const out = grade(q, input);
+    if (old && old.s != null) archiveHist(q.id, old); // 已判分＝重做：旧记录归档，新成绩成为掌握依据
+    store[q.id] = { u: input, s: out.s, ts: Date.now(), v: old && old.v };
+    save();
+    recite.result = { id: q.id, input, out, oldScore: old && old.s != null ? old.s : null, aiPending: false, aiError: "" };
+    reciteRefreshQueue(q.id);
+    renderStats(); renderChapters(); renderList(); // 主列表在弹层背后同步刷新（不滚动、不跳转）
+    reciteRenderCard();
+    const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+    if (q.type === "essay") reciteUpgradeEssay(q, input); // 简答异步升级 AI 判分（同主站口径）
+  }
+  function reciteRefreshQueue(currentId) {
+    recite.all = reciteAll();
+    recite.list = RECITE.filter(recite.all, { group: recite.group, type: recite.type });
+    const pos = currentId != null ? recite.list.findIndex((e) => e.id === currentId) : -1;
+    if (pos >= 0) recite.idx = pos;
+    else recite.idx = Math.min(recite.idx, Math.max(0, recite.list.length - 1)); // 已掌握被移出队列：留在原位
+    reciteRenderFilters();
+    reciteRenderQueue();
+    reciteRenderNav();
+  }
+  function reciteResultHTML(q, r) {
+    const out = r.out, s = out.s, cls = scoreCls(s), mastered = s >= 80;
+    const label = mastered ? (s >= 85 ? "掌握良好" : "已掌握") : s >= 60 ? "基本及格，继续巩固" : "还需加强背诵";
+    const badge = out.engine === "ai"
+      ? '<span class="ai-badge ai">🤖 AI 判分</span>'
+      : r.aiPending
+        ? '<span class="ai-pending">🤖 AI 升级判分中…</span>'
+        : r.aiError
+          ? `<span class="ai-badge local" title="AI 判分不可用：${esc(r.aiError)}">本机估分</span>`
+          : "";
+    let detail = "";
+    if (q.type === "single") {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      detail = `<div class="opts">` + opts.map((o) => {
+        const right = o.key === q.answer, chosen = o.key === r.input;
+        const c = right ? "right" : chosen ? "wrong" : "dim";
+        return `<div class="opt ${c}"><span class="key">${o.key}</span><span>${esc(o.text)}</span>` +
+          (right ? '<span class="opt-ans ok">✓ 正确答案</span>' : chosen ? '<span class="opt-ans no">你的选择 ✗</span>' : "") + `</div>`;
+      }).join("") + `</div>` +
+        `<div class="rcard-ans">✅ 正确答案：<b>${esc(q.answer)}</b> · ${esc((opts.find((o) => o.key === q.answer) || {}).text || "")}</div>`;
+      if (q.explain || q.ref) detail += `<div class="explain show">${explainHTML(q, { noAI: true })}</div>`;
+    } else if (q.type === "blank") {
+      const blanks = Array.isArray(q.blanks) ? q.blanks : [];
+      const parts = q.stem.split(/_{2,}/);
+      let stem = "";
+      parts.forEach((p, i) => {
+        stem += esc(p);
+        if (i < parts.length - 1) {
+          const ok = out.per && out.per[i] && out.per[i].ok;
+          stem += `<input class="blank ${ok ? "right" : "wrong"}" value="${esc((r.input && r.input[i]) || "")}" disabled>`;
+        }
+      });
+      detail = `<div class="stem">${stem}</div>` +
+        `<div class="rcard-ans">✅ 应填：${blanks.map((v) => `<b>${esc((v && v[0]) || "")}</b>`).join("、")}</div>` +
+        (out.per || []).map((p, i) =>
+          `<div class="blank-report">${i + 1}. ${p.ok ? `<span class="b-ok">✓ ${esc(p.input)}</span>` : `<span class="b-no">✗ 你填：${esc(p.input || "（空）")}</span> → 应填 <code>${esc(p.expect)}</code>`}</div>`).join("") +
+        refBlock(q);
+    } else {
+      const per = out.per || [];
+      detail = `<div class="point-list">` + per.map((p, pi) => {
+        const cn = { hit: "命中要点", part: "部分命中", miss: "未答到" }[p.state];
+        const bar = `<div class="cov-track" style="color:${p.state === "hit" ? "var(--ok)" : p.state === "part" ? "var(--warn)" : "var(--bad)"}"><div class="cov-bar" style="width:${Math.round(p.cov * 100)}%"></div></div>`;
+        const frags = p.segs && p.segs.length ? `<div class="frags">答到片段：${p.segs.slice(0, 6).map((seg) => `<span>${esc(seg)}</span>`).join("")}</div>` : "";
+        const cmt = p.comment ? `<div class="per-comment">🤖 ${esc(p.comment)}</div>` : "";
+        return `<div class="point ${p.state}"><div class="p-head"><span class="p-state">${cn} ${Math.round(p.cov * 100)}%</span>${bar}</div>` +
+          `<div>${rich(pointTexts(q, pi, p.text), q)}</div>${frags}${cmt}</div>`;
+      }).join("") + `</div>` +
+        (out.summary ? `<details class="ai-reply"${out.fresh ? " open" : ""}><summary>🤖 AI 完整回复</summary><div class="ai-reply-body">${esc(out.summary)}</div></details>` : "");
+    }
+    const histNote = r.oldScore != null ? `原记录 ${r.oldScore} 分 → 本次 ${s} 分` : "本次成绩已计入掌握";
+    return `<article class="rcard recite-result" data-id="${q.id}">
+      <div class="rcard-head"><span class="qno">原题 #${q.id}</span>
+        <span class="badge ${q.type}">${TYPE_CN[q.type]}</span><span class="chap">${esc(q.chapter)}</span>
+        <span class="rcard-tag ${mastered ? "good" : s >= 60 ? "mid" : "wrong"}">${mastered ? "已掌握" : "未掌握"}</span></div>
+      <div class="verdict"><span class="score-big ${cls}">${s}</span><span class="tag ${cls}">${label}</span>${badge}</div>
+      ${detail}
+      <div class="rcard-actions">
+        <button type="button" class="primary" id="reciteNextAfter">下一题 →</button>
+        ${mastered ? "" : '<button type="button" class="secondary" id="reciteBackCard">返回背题卡</button>'}
+        <span class="rcard-tip">${histNote}${mastered ? "，已移出重点背队列" : ""}</span>
+      </div>
+    </article>`;
+  }
+  function reciteRenderResult(q, r) {
+    if (!q) return;
+    const box = $("#reciteCard"), st = box.scrollTop;
+    box.innerHTML = reciteResultHTML(q, r);
+    box.scrollTop = st;
+  }
   function reciteRenderNav() {
-    const n = recite.list.length;
-    $("#recitePos").innerHTML = n ? `第 <b>${recite.idx + 1}</b> / ${n} 题` : "—";
-    $("#recitePrev").disabled = !n || recite.idx <= 0;
-    $("#reciteNext").disabled = !n || recite.idx >= n - 1;
+    const n = recite.list.length, inPractice = recite.mode === "practice";
+    const inResult = inPractice && !!recite.result;
+    $("#recitePos").innerHTML = inPractice
+      ? (recite.result ? "已提交评分" : "练习中")
+      : n ? `第 <b>${recite.idx + 1}</b> / ${n} 题` : "—";
+    $("#recitePrev").disabled = inPractice || !n || recite.idx <= 0;
+    // 结果态的底部「下一题」直接进下一题（手机端不必滚到卡内按钮）；作答中点禁用
+    $("#reciteNext").disabled = inResult ? false : inPractice || !n || recite.idx >= n - 1;
   }
   function reciteStep(delta) {
+    if (recite.mode === "practice") return; // 练习中先提交/取消，避免误丢作答
     if (!recite.list.length) return;
     const next = Math.max(0, Math.min(recite.list.length - 1, recite.idx + delta));
     if (next === recite.idx) return;
@@ -383,28 +544,64 @@
     reciteRenderQueue(); reciteRenderCard(); reciteRenderNav();
     const main = $("#reciteCard"); if (main) main.scrollTop = 0;
   }
-  // 去练这道题：关弹层、清筛选/组卷（保证题目一定在列表里可见），定位到题卡
-  function recitePractice() {
+  function reciteLeavePractice() {
+    if (recite.mode !== "practice") return;
+    recite.mode = "back"; recite.result = null; recite.oldScore = null;
+  }
+  // 「开始练习」/「重做并练习」：不跳主列表，直接在当前背题卡里出作答表单。
+  // 已判分题只在提交时归档旧记录并覆盖，取消/切题不写盘；未判分题沿用首次评分。
+  function reciteStartPractice() {
     const it = recite.list[recite.idx];
     if (!it) return;
-    const dlg = $("#reciteDialog");
-    if (dlg && dlg.open) dlg.close();
-    if (shuffle) {
-      shuffle = false;
-      const sb = $("#shuffleBox"); if (sb) sb.checked = false;
-      clearShuffle();
-      const sa = $("#shuffleAgain"); if (sa) sa.style.display = "none";
-    }
-    filters = { chapter: "all", type: "all", status: "all", search: "" };
-    const cs = $("#chapterSel"); if (cs) cs.value = "all";
-    $$("#typeChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.type === "all"));
-    $$("#statusChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.status === "all"));
-    const sb2 = $("#searchBox"); if (sb2) sb2.value = "";
-    renderList();
-    const card = document.querySelector(`.card[data-id="${it.id}"]`);
-    if (card) card.scrollIntoView({ block: "center" });
-    const graded = !!(store[it.id] && store[it.id].s != null);
-    toast(graded ? "已定位到这道题：已判分，先点「重做此题」再提交（新一次评分才计入掌握）" : "已定位到这道题：答一遍检验，≥80 分即移出重点背队列");
+    const rec = store[it.id];
+    recite.mode = "practice";
+    recite.result = null;
+    recite.oldScore = rec && rec.s != null ? rec.s : null;
+    reciteRenderCard(); reciteRenderNav();
+    const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+  }
+  function reciteNextAfterResult() {
+    const id = recite.result && recite.result.id;
+    const list = recite.list;
+    const pos = id != null ? list.findIndex((e) => e.id === id) : -1;
+    const idx = pos >= 0 ? Math.min(pos + 1, list.length - 1) : Math.min(recite.idx, Math.max(0, list.length - 1));
+    recite.idx = Math.max(0, idx);
+    recite.mode = "back"; recite.result = null; recite.oldScore = null;
+    reciteRenderQueue(); reciteRenderCard(); reciteRenderNav();
+    const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+  }
+  function reciteBackToCard() {
+    recite.mode = "back"; recite.result = null; recite.oldScore = null;
+    reciteRenderCard(); reciteRenderNav();
+    const main = $("#reciteCard"); if (main) main.scrollTop = 0;
+  }
+  // 简答在背题页内作答后同样异步升级 AI 判分：成功更新成绩与逐点点评，失败保留本机分并标原因
+  // （与主站 upgradeEssay 同口径；不写主列表 DOM，只刷新当前结果区与队列）。
+  function reciteUpgradeEssay(q, input) {
+    if (!aiEnabled()) return;
+    if (!recite.result || recite.result.id !== q.id) return;
+    recite.result.aiPending = true;
+    reciteRenderCard();
+    requestAI(q, input).then((data) => {
+      const rec = store[q.id];
+      if (!rec || essayTextOf(rec.u) !== input.whole) return; // 用户已重答/切题，丢弃过期结果
+      const summary = typeof data.summary === "string" ? data.summary : "";
+      rec.s = data.score;
+      rec.g = { score: data.score, per: data.per, ts: Date.now() };
+      if (summary) rec.g.summary = summary;
+      save(); renderStats(); renderChapters(); renderList();
+      if (!recite.result || recite.result.id !== q.id) return;
+      recite.result.out = { s: data.score, per: data.per, engine: "ai", summary, fresh: true };
+      recite.result.aiPending = false; recite.result.aiError = "";
+      reciteRefreshQueue(q.id);
+      reciteRenderCard();
+    }).catch((e) => {
+      if (e.code === "svc_down" || e.code === "no_key" || e.code === "bad_key") aiOff = true;
+      if (!recite.result || recite.result.id !== q.id) return;
+      recite.result.aiPending = false;
+      recite.result.aiError = AI_CODES[e.code] || e.code || "upstream";
+      reciteRenderCard();
+    });
   }
   function bindRecite() {
     if (!reciteEnabled()) { const b = $("#reciteEntry"); if (b) b.remove(); return; }
@@ -414,25 +611,63 @@
     if (!dlg) return;
     $("#reciteClose").addEventListener("click", () => dlg.close());
     $("#recitePrev").addEventListener("click", () => reciteStep(-1));
-    $("#reciteNext").addEventListener("click", () => reciteStep(1));
+    $("#reciteNext").addEventListener("click", () => {
+      if (recite.mode === "practice" && recite.result) { reciteNextAfterResult(); return; }
+      reciteStep(1);
+    });
     $("#reciteGroupChips").addEventListener("click", (e) => {
       const b = e.target.closest(".chip"); if (!b) return;
+      reciteLeavePractice();
       recite.group = b.dataset.group; recite.idx = 0;
       reciteRenderFilters(); reciteApply();
     });
     $("#reciteTypeChips").addEventListener("click", (e) => {
       const b = e.target.closest(".chip"); if (!b) return;
+      reciteLeavePractice();
       recite.type = b.dataset.type; recite.idx = 0;
       reciteRenderFilters(); reciteApply();
     });
     $("#reciteQueue").addEventListener("click", (e) => {
       const li = e.target.closest(".recite-q-item"); if (!li) return;
+      reciteLeavePractice();
       recite.idx = +li.dataset.i;
       reciteRenderQueue(); reciteRenderCard(); reciteRenderNav();
       const main = $("#reciteCard"); if (main) main.scrollTop = 0;
     });
-    $("#reciteCard").addEventListener("click", (e) => { if (e.target.closest("#recitePractice")) recitePractice(); });
-    // 左右方向键翻题（弹层内无输入框；Esc 由 <dialog> 原生关闭）
+    // 背题卡内事件委托：开始/重做练习 → 提交 → 取消/下一题；练习表单的选项点击与输入草稿
+    $("#reciteCard").addEventListener("click", (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest("#recitePractice")) { reciteStartPractice(); return; }
+      if (t.closest("#reciteSubmit")) { reciteSubmitPractice(); return; }
+      if (t.closest("#reciteCancel")) {
+        const id = recite.list[recite.idx] && recite.list[recite.idx].id;
+        reciteLeavePractice();
+        if (id != null) reciteRefreshQueue(id); // 未判分草稿已落盘：刷新队列让「有草稿未提交」标记即时生效
+        reciteRenderCard(); reciteRenderNav();
+        return;
+      }
+      if (t.closest("#reciteNextAfter")) { reciteNextAfterResult(); return; }
+      if (t.closest("#reciteBackCard")) { reciteBackToCard(); return; }
+      const opt = t.closest(".recite-practice .opt");
+      if (opt && recite.mode === "practice" && !recite.result) {
+        $$(".opt", opt.parentNode).forEach((o) => o.classList.remove("picked"));
+        opt.classList.add("picked");
+        const card = t.closest(".recite-practice"), q = card && QBYID[+card.dataset.id];
+        if (q && !(store[q.id] && store[q.id].s != null)) saveDraft(q, card); // 仅未判分题存草稿；重做中取消不写盘
+      }
+    });
+    $("#reciteCard").addEventListener("input", (e) => {
+      if (e.target.matches("textarea.ans")) autoGrow(e.target);
+      if (recite.mode !== "practice" || recite.result) return;
+      const card = e.target.closest(".recite-practice");
+      if (!card) return;
+      const q = QBYID[+card.dataset.id];
+      if (q && !(store[q.id] && store[q.id].s != null)) saveDraft(q, card);
+    });
+    // 关闭弹层/切题时退出练习态（未判分草稿已随输入落盘；重做未提交不写盘）
+    dlg.addEventListener("close", reciteLeavePractice);
+    // 左右方向键翻题（背题态；练习中禁用，Esc 由 <dialog> 原生关闭）
     dlg.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft") { e.preventDefault(); reciteStep(-1); }
       else if (e.key === "ArrowRight") { e.preventDefault(); reciteStep(1); }

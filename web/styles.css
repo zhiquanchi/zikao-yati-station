@@ -479,3 +479,18 @@ button.mm-entry { border: 0; cursor: pointer; font-family: inherit; }
   .topbar .mm-entry { margin-top: 8px; }
   .topbar .recite-entry { margin-left: 6px; }
 }
+
+/* ——— 重点优先背 · 当前页内练习/结果（不跳主列表；复用主站判分样式） ——— */
+.rcard-tag.practice { background: var(--accent-soft); color: var(--accent); }
+.rcard-tag.good { background: var(--ok-soft); color: var(--ok); }
+.recite-practice .opt { cursor: pointer; }
+.recite-practice .opt:hover { border-color: var(--accent); background: var(--accent-soft); }
+.recite-practice .opt.picked { border-color: var(--accent); background: var(--accent-soft); }
+.recite-practice textarea.ans { margin-top: 2px; }
+.recite-result .verdict { margin: 4px 0 12px; }
+.recite-result .opts .opt { cursor: default; }
+.recite-result .opts .opt:hover { border-color: var(--line); background: transparent; }
+.recite-result .opts .opt.right:hover { border-color: var(--ok); background: var(--ok-soft); }
+.recite-result .opts .opt.wrong:hover { border-color: var(--bad); background: var(--bad-soft); }
+.recite-result .explain.show { margin-top: 10px; }
+.recite-result .ref-block { margin-top: 10px; }
