@@ -25,7 +25,7 @@
   // 返回 {chapters:[{name, sections:[{id,title,types,items,ids,status,pendingIds,by}], pending, total}], counts}
   // status：该考点挂的题里只要还有未达 80 的（或根本没挂题）＝pending（未掌握），否则 master。
   function build(memo, store) {
-    const counts = { chapters: 0, sections: 0, pending: 0, master: 0, questions: 0, mastered: 0, wrong: 0, mid: 0, todo: 0, draft: 0 };
+    const counts = { chapters: 0, sections: 0, pending: 0, master: 0, questions: 0, mastered: 0, wrong: 0, mid: 0, todo: 0, draft: 0, sectionsWrong: 0 };
     const seen = new Set();
     const chapters = [];
     for (const ch of (memo && memo.chapters) || []) {
@@ -51,6 +51,7 @@
           }
         }
         const status = !ids.length || pendingIds.length ? "pending" : "master";
+        if (by.wrong) counts.sectionsWrong++; // 有答错题的考点：考前优先看
         row.sections.push({ id: sec.id, title: sec.title, types: sec.types || [], items: sec.items || [], ids, status, pendingIds, by });
         row.total++;
         counts.sections++;
@@ -63,7 +64,8 @@
     return { chapters, counts };
   }
 
-  // 界面筛选：status 取 all / pending / master；keyword 命中考点标题、编号或任一知识点文字
+  // 界面筛选：status 取 all / pending / wrong / master；keyword 命中考点标题、编号或任一知识点文字。
+  // wrong＝只看「有答错题」的考点，并按「答错多 → 待提高 → 未作答」优先排序（考前先背失分点）。
   function filter(view, opts) {
     const status = (opts && opts.status) || "pending";
     const kw = String((opts && opts.keyword) || "").trim().toLowerCase();
@@ -71,13 +73,18 @@
     const chapters = [];
     let shown = 0;
     for (const ch of (view && view.chapters) || []) {
-      const sections = ch.sections.filter((sec) =>
-        (status === "all" || sec.status === status) &&
-        (!kw || hit(sec.title) || hit(sec.id) || (sec.items || []).some((it) => hit(it.t))));
+      let sections = ch.sections.filter((sec) => {
+        if (status === "wrong") { if (!sec.by.wrong) return false; }
+        else if (status !== "all" && sec.status !== status) return false;
+        return !kw || hit(sec.title) || hit(sec.id) || (sec.items || []).some((it) => hit(it.t));
+      });
       if (!sections.length) continue;
+      if (status === "wrong") sections = sections.slice().sort((a, b) => (b.by.wrong - a.by.wrong) || (b.by.mid - a.by.mid) || (b.by.todo - a.by.todo));
       shown += sections.length;
-      chapters.push({ name: ch.name, pending: ch.pending, total: ch.total, sections });
+      const wrong = sections.reduce((n, s) => n + s.by.wrong, 0);
+      chapters.push({ name: ch.name, pending: ch.pending, total: ch.total, sections, wrong });
     }
+    if (status === "wrong") chapters.sort((a, b) => b.wrong - a.wrong); // 章按该章答错总数排，先看最痛的一章
     return { chapters, counts: view.counts, shown };
   }
 

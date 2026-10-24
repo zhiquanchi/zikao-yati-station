@@ -750,18 +750,19 @@
     const view = memoView();
     const c = view.counts;
     $("#memoSub").innerHTML = memoSubHTML(c);
-    const chips = [["pending", `未掌握 ${c.pending}`], ["master", `已掌握 ${c.master}`], ["all", `全部 ${c.sections}`]];
+    const chips = [["pending", `未掌握 ${c.pending}`], ["wrong", `❗ 答错 ${c.sectionsWrong}`], ["master", `已掌握 ${c.master}`], ["all", `全部 ${c.sections}`]];
     $("#memoStatusChips").innerHTML = chips.map(([k, label]) =>
       `<button type="button" class="chip${memoState.status === k ? " active" : ""}" data-status="${k}">${label}</button>`).join("");
     const f = MEMO.filter(view, memoState);
     if (!f.chapters.length) {
       $("#memoBody").innerHTML = `<div class="memo-empty">` + (memoState.keyword
         ? "没有匹配的考点，换个关键词或切到「全部」看看。"
+        : memoState.status === "wrong" ? "还没有答错的考点——保持住，去「未掌握」把没做过的补上。"
         : c.pending ? "当前筛选下没有考点。" : "🎉 考点对应题目都已掌握（≥80 分），考前翻翻思维导图保持手感即可。") + `</div>`;
       return;
     }
     $("#memoBody").innerHTML = f.chapters.map((ch) =>
-      `<section class="memo-chap"><h3>${esc(ch.name)}<span class="memo-chap-count">未掌握 ${ch.pending} / ${ch.total} 考点</span></h3>` +
+      `<section class="memo-chap"><h3>${esc(ch.name)}<span class="memo-chap-count">${memoState.status === "wrong" ? `答错 ${ch.wrong} 题` : `未掌握 ${ch.pending} / ${ch.total} 考点`}</span></h3>` +
       ch.sections.map(memoSectionHTML).join("") + `</section>`).join("");
   }
   function memoOpen() {

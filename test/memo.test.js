@@ -41,7 +41,7 @@ describe("考前重点记忆：掌握度分档", () => {
     expect(s11.pendingIds).toEqual([2]);
     expect(s12.status).toBe("master");
     expect(v.chapters[1].sections[0].status).toBe("pending"); // 没挂题：无法判定掌握，按未掌握展示
-    expect(v.counts).toMatchObject({ chapters: 2, sections: 3, pending: 2, master: 1, questions: 3, mastered: 2, wrong: 1, mid: 0, todo: 0 });
+    expect(v.counts).toMatchObject({ chapters: 2, sections: 3, pending: 2, master: 1, questions: 3, mastered: 2, wrong: 1, mid: 0, todo: 0, sectionsWrong: 1 });
   });
 
   it("同一道题挂在多个考点时只统计一次", () => {
@@ -87,6 +87,28 @@ describe("考前重点记忆：筛选与搜索", () => {
     expect(M.filter(view(), { status: "all", keyword: "层次结构" }).shown).toBe(1);
     expect(M.filter(view(), { status: "all", keyword: "不存在的词" }).shown).toBe(0);
     expect(M.filter(view(), { status: "all", keyword: "   " }).shown).toBe(3); // 空白关键词＝不过滤
+  });
+
+  it("❗ 答错视图：只保留有答错题的考点，按答错数优先（章与节都重排）", () => {
+    const m = {
+      chapters: [
+        { name: "第一章", sections: [
+          { id: "1.1", title: "甲", items: [], ids: [1] },
+          { id: "1.2", title: "乙", items: [], ids: [2] },
+        ] },
+        { name: "第二章", sections: [
+          { id: "2.1", title: "丙", items: [], ids: [3, 4] },
+        ] },
+      ],
+    };
+    const v = M.build(m, { 1: { s: 0 }, 2: { s: 90 }, 3: { s: 40 }, 4: { s: 30 } });
+    expect(v.counts.sectionsWrong).toBe(2); // 1.1 与 2.1；1.2 已掌握不算
+    const f = M.filter(v, { status: "wrong" });
+    expect(f.shown).toBe(2);
+    expect(f.chapters.map((c) => c.name)).toEqual(["第二章", "第一章"]); // 第二章答错 2 题更多，排前面
+    expect(f.chapters[0].sections.map((s) => s.id)).toEqual(["2.1"]);
+    expect(f.chapters[0].wrong).toBe(2);
+    expect(f.chapters[1].wrong).toBe(1);
   });
 
   it("筛掉的章节整章不出现，筛选结果保留原章节顺序", () => {
