@@ -592,6 +592,9 @@ button.mm-entry { border: 0; cursor: pointer; font-family: inherit; }
   .memo-sub .rs-item b { font-size: 13px; }
   .memo-sub .rs-tip { display: none; }
   .memo-tools { padding: 8px 12px; gap: 8px; }
+  .memo-tools .chips { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; width: 100%; }
+  .memo-tools .chips::-webkit-scrollbar { display: none; }
+  .memo-tools .chip { flex: none; }
   .memo-tools input[type="search"] { min-width: 100%; }
   .memo-body { padding: 12px 12px calc(24px + env(safe-area-inset-bottom)); }
   .memo-sec summary { padding: 10px 12px; }
