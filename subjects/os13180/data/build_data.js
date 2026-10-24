@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { metaOf } from "../../../scripts/config.js";
 import { fullRef, variantsOf, splitBlanks, applyUnordered, applyEssayPoints, applyExplains, writeArtifacts } from "../../../scripts/build-lib.js";
+import { buildSubjectMemo } from "../../../scripts/memo-lib.js";
 
 const HERE = import.meta.dir;
 const SUBJECT = JSON.parse(readFileSync(path.join(HERE, "..", "subject.json"), "utf8"));
@@ -169,13 +170,17 @@ function main() {
   applyUnordered(questions, unord, warnings);
   applyEssayPoints(questions, essayPts, warnings, { warnMissing: true });
   applyExplains(questions, expl, warnings, { allTypes: true, warnMissingExplanation: true });
+  // 「考前重点记忆」：把串讲导图 md 拆成考点小节并挂题目 id（科目 subject.json memo 开启时才装配）
+  const memoRes = buildSubjectMemo({ subjectDir: path.join(HERE, ".."), subject: SUBJECT, questions, explains: expl, warnings });
   const cnt = { single: 0, blank: 0, essay: 0 };
   questions.forEach((q) => cnt[q.type]++);
   console.log("章节:", chapters.length);
   console.log("题目:", questions.length, cnt);
   console.log("解析覆盖:", questions.filter((q) => String(q.id) in expl).length, "/", questions.length);
+  console.log("重点记忆:", memoRes ? `${memoRes.stats.sections} 个考点小节（${memoRes.stats.mapped} 个已挂题目）` : "未开启");
   console.log("警告:", warnings.length ? warnings : "无");
   const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters, questions };
+  if (memoRes) payload.memo = memoRes.memo;
   const { outJs, outJson } = writeArtifacts(path.join(HERE, ".."), payload);
   console.log("已生成:", outJs, outJson);
 }

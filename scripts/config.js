@@ -37,6 +37,6 @@ export function metaOf(s) {
   return {
     prefix: s.prefix, code: s.code, name: s.name, examMonth: s.examMonth,
     title: s.title, pageTitle: s.pageTitle, storageKey: s.storageKey,
-    flags: s.flags || {}, paper: s.paper || {}, mindmap: s.mindmap || {},
+    flags: s.flags || {}, paper: s.paper || {}, mindmap: s.mindmap || {}, memo: s.memo || {},
   };
 }

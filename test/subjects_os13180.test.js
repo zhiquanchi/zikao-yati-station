@@ -94,3 +94,34 @@ describe("操作系统：题库完整性", () => {
     expect(unord.ids.length).toBeGreaterThan(0);
   });
 });
+
+describe("操作系统：考前重点记忆数据", () => {
+  it("memo 随 data.js 产出：8 章 46 个考点小节，条目不残留题型标签", () => {
+    expect(data.meta.memo && data.meta.memo.enabled).toBe(true);
+    expect(Array.isArray(data.memo.chapters)).toBe(true);
+    expect(data.memo.chapters.length).toBe(8);
+    const secs = data.memo.chapters.flatMap((c) => c.sections);
+    expect(secs.length).toBe(46);
+    for (const s of secs) {
+      expect(s.id).toMatch(/^[1-8]\.[1-8]$/);
+      expect(typeof s.title === "string" && s.title.length > 0).toBe(true);
+      expect(s.items.length).toBeGreaterThan(0);
+      expect(s.ids.length).toBeGreaterThan(0); // 每个考点都挂到题目，否则题全部答对也无法移出「未掌握」
+      for (const it of s.items) expect(it.t).not.toContain("〔");
+    }
+  });
+  it("190 道题都至少挂在一个考点上（不漏题）", () => {
+    const ids = new Set();
+    for (const ch of data.memo.chapters) for (const sec of ch.sections) for (const id of sec.ids) ids.add(id);
+    expect(ids.size).toBe(190);
+    for (const q of data.questions) expect(ids.has(q.id)).toBe(true);
+  });
+  it("考点编号唯一、章数与题库章节一致、编号前缀与章序对齐", () => {
+    const secs = data.memo.chapters.flatMap((c) => c.sections);
+    expect(new Set(secs.map((s) => s.id)).size).toBe(secs.length);
+    expect(data.memo.chapters.length).toBe(data.chapters.length);
+    data.memo.chapters.forEach((ch, i) => {
+      for (const s of ch.sections) expect(s.id.split(".")[0]).toBe(String(i + 1));
+    });
+  });
+});

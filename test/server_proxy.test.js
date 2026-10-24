@@ -215,7 +215,7 @@ for (const s of loadSubjects()) {
       const djs = await (await fetch(`http://127.0.0.1:${port}/data.js`)).text();
       expect(djs).toContain(`"storageKey":"${s.storageKey}"`); // 科目目录产物优先
       expect(djs).toContain(`"prefix":"${s.prefix}"`);
-      for (const f of ["app.js", "grading.js", "sync.js", "identity.js", "recite.js", "subject-switch.js", "styles.css", "subjects.js"]) {
+      for (const f of ["app.js", "grading.js", "sync.js", "identity.js", "recite.js", "memo.js", "subject-switch.js", "styles.css", "subjects.js"]) {
         expect((await fetch(`http://127.0.0.1:${port}/${f}`)).status).toBe(200); // web/ 共享引擎兜底
       }
       if (s.mindmap && s.mindmap.enabled) {

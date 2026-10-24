@@ -12,5 +12,6 @@
   "flags": { "explain": true },
   "paper": { "target": 100, "scores": { "single": 1, "blank": 2, "essay": 5 } },
   "mindmap": { "enabled": true, "file": "操作系统考点串讲-思维导图.md", "label": "🗺 考点思维导图（串讲 8 章全览）" },
+  "memo": { "enabled": true, "label": "📚 考前重点记忆" },
   "grade": { "materialTitle": "操作系统考点串讲" }
 }

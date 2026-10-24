@@ -23,9 +23,9 @@
 
 ## 结构
 
-- 前端经典脚本按序加载（web/index.html）：`data.js`（window.QUIZ_DATA，科目产物）→ `grading.js`（window.GRADER）→ `sync.js`（window.SYNC）→ `identity.js`（window.IDENTITY，多用户同步码身份）→ `recite.js`（window.RECITE，重点优先背纯排序）→ `subjects.js`（window.SUBJECTS，切换器清单，生成物）→ `app.js` → `subject-switch.js`。**科目身份全部来自 `QUIZ_DATA.meta`**（build 时由 subject.json 注入）：存储键、标题文案、题型分值/组卷目标、特性开关——新增「这科和那科不一样」的东西，加 subject.json 字段 + meta，不在引擎里写死。
-- `subjects/<科目>/`：`subject.json`（身份唯一源：prefix/code/name/标题/storageKey/ports/flags/paper/mindmap/grade）、`data/`（raw.txt、**build_data.js＝该科 docx 专属解析器**、questions.json、可选 explanations/essay_points/unordered）、`data.js`（生成物，有意提交）、`mindmap.html`（导图页，数据内联）、科目根导图 md、`grade/reference.md`（可选：单选逐项解析参考资料，须与导图逐字一致）。`_template/` 为新科目骨架。
-- `scripts/`：`config.js`（loadSubjects/findSubject/metaOf——server/build/deploy/测试共用）、`build-lib.js`（装配共享层：fullRef/variantsOf/orderVariants/splitBlanks/applyUnordered/applyEssayPoints/applyExplains/writeArtifacts）、`build.js`、`stage.js`、`gen-compose.js`、`new-subject.js`、`gen-merge-golden.js`（云同步跨语言夹具生成器）。
+- 前端经典脚本按序加载（web/index.html）：`data.js`（window.QUIZ_DATA，科目产物）→ `grading.js`（window.GRADER）→ `sync.js`（window.SYNC）→ `identity.js`（window.IDENTITY，多用户同步码身份）→ `recite.js`（window.RECITE，重点优先背纯排序）→ `memo.js`（window.MEMO，考前重点记忆按掌握度过滤考点）→ `subjects.js`（window.SUBJECTS，切换器清单，生成物）→ `app.js` → `subject-switch.js`。**科目身份全部来自 `QUIZ_DATA.meta`**（build 时由 subject.json 注入）：存储键、标题文案、题型分值/组卷目标、特性开关——新增「这科和那科不一样」的东西，加 subject.json 字段 + meta，不在引擎里写死。
+- `subjects/<科目>/`：`subject.json`（身份唯一源：prefix/code/name/标题/storageKey/ports/flags/paper/mindmap/memo/grade）、`data/`（raw.txt、**build_data.js＝该科 docx 专属解析器**、questions.json、可选 explanations/essay_points/unordered/memo_kp）、`data.js`（生成物，有意提交）、`mindmap.html`（导图页，数据内联）、科目根导图 md、`grade/reference.md`（可选：单选逐项解析参考资料，须与导图逐字一致）。`_template/` 为新科目骨架。
+- `scripts/`：`config.js`（loadSubjects/findSubject/metaOf——server/build/deploy/测试共用）、`build-lib.js`（装配共享层：fullRef/variantsOf/orderVariants/splitBlanks/applyUnordered/applyEssayPoints/applyExplains/writeArtifacts）、`memo-lib.js`（考前重点记忆装配：串讲 md→考点小节 + 题目映射 + `data/memo_kp.json` 补齐）、`build.js`、`stage.js`、`gen-compose.js`、`new-subject.js`、`gen-merge-golden.js`（云同步跨语言夹具生成器）。
 - `grade-svc/` 为独立 Go module：main.go 路由、grader.go prompt/上游/normalize/缓存、explain.go 单选逐项解析、subject.go 科目配置装载；`cmd/syncsvc/` ＝云同步服务 sync-svc（store.go：合并/整形校验/(科目,用户) 槽位与旧单槽表迁移、纯 Go SQLite 驱动 modernc 以维持 CGO_ENABLED=0 交叉构建；`-normalize` stdio 模式供夹具生成器），`Dockerfile.sync` 独立出镜像。
 - `portal/`：portal.js（科目清单读生成的 portal/subjects.json，前缀路由/判分上游/裸根重定向全循环；api/store 与 api/grade 一样纯转发上游 SYNC_API，门户不执行业务逻辑）。
 
@@ -46,6 +46,7 @@
 - 评分只记首次：`store[q.id].s` 由第一次「提交评分」写入并决定掌握状态（统计/筛选/组卷权重全看它）；此后点「重新评分」只算 `out.practice` 展示（按钮旁「练习分 · 不计入掌握」），不写 store、不归档 `.hist`、也不刷新分数胶囊；简答的 AI 升级同理传 `record=false` 只展示不上账。想重新计分走「重做此题」（清记录后再次提交即新首次）。
 - AI 判分链路保持：`grade()` 纯同步，AI 只出现在 upgradeEssay 异步链；`svc_down/no_key/bad_key` 会话熔断 `aiOff`；restore 有 `g` 不再打网络。单选逐项解析按钮仅当 `meta.flags.explain` 为真时渲染。
 - 重点优先背（`web/recite.js` 纯函数 + app.js 弹层）：科目 `meta.flags.recite` 为真才注入顶栏入口；未掌握＝首次评分 <80（含未作答），队列排序「答错（分低在前）→ 待提高 60~79 → 未作答；同档简答/填空先背，未作答中看过解析的优先」；掌握线常量 MASTER=80 与状态筛选口径一致，改阈值两处同改。全屏弹层复用 `explainHTML(q,{noAI/noAns/noPts})` 静态展示答案，不渲染逐项解析按钮。**「开始/重做并练习」在当前背题页内联作答（复用 `collect`/`grade`/首次与重做语义），提交后原地出分、逐项反馈与解析，不跳主列表、不清筛选/组卷**；已判分题提交时 `archiveHist` 旧记录并覆盖新成绩（取消不写盘），简答同主站异步升级 AI 判分。**手机/窄屏默认收起统计与筛选**（`recite.folded` ↔ `.recite-shell.folded`；头部 `#reciteFold` 切换、`matchMedia(max-width:900px)` 定默认、手动选择后本次会话记住；收起后题卡区占满剩余高度，副标题只留一行战况，不新增存储键）。只读 store、不改云同步形状。
+- 考前重点记忆（`web/memo.js` 纯函数 + app.js 弹层）：科目 `meta.memo` 为真才注入顶栏入口；数据 `QUIZ_DATA.memo`＝build 时由 `scripts/memo-lib.js` 从科目串讲导图 md 拆出的「章→节→要点」＋每节挂的题目 id（`data/explanations.json` 的「考点X.Y」标注自动映射，无标注的题在 `data/memo_kp.json` 人工补，缺映射 build 告警）。前端只读 store：某节所挂题**全部 ≥80**（与 `RECITE.MASTER` 同一掌握线）即标已掌握、移出默认「未掌握」视图，并展示答错/待提高/未作答题数分布；**只列知识点、不显示题干、不判分、不新增存储键**。手机端战况横滑、说明收起、题型标签让位；改掌握阈值与 `recite.js`/状态筛选同改。
 
 ## 判分 AI 服务（grade-svc · /api/grade）
 

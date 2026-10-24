@@ -237,6 +237,7 @@
       `<span class="stat">未练 <b>${total - done}</b></span>`;
     $(".progress-bar", ensureTrack()).style.width = (done / total * 100).toFixed(1) + "%";
     updateReciteEntry(); // 顶栏「重点优先背」角标跟着掌握情况走
+    updateMemoEntry();   // 顶栏「考前重点记忆」角标同理
   }
 
   function renderChapters() {
@@ -701,6 +702,93 @@
     dlg.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft") { e.preventDefault(); reciteStep(-1); }
       else if (e.key === "ArrowRight") { e.preventDefault(); reciteStep(1); }
+    });
+  }
+
+  // ——— 考前重点记忆 ———
+  // 科目 meta.memo.enabled 开启（subject.json→meta）：把串讲导图拆出的考点小节，按「是否还有未掌握题」
+  // 分档列出——只显示知识点、不显示题干，也不判分；某考点所挂的题全部 ≥80 分后自动移出「未掌握」。
+  // 统计/筛选纯函数在 web/memo.js；入口与弹层样式复用重点优先背那一套。
+  const MEMO = window.MEMO;
+  const memoState = { status: "pending", keyword: "" };
+  function memoEnabled() { return !!(D.meta.memo && D.meta.memo.enabled) && !!(MEMO && D.memo); }
+  function memoView() { return MEMO.build(D.memo, store); }
+  function updateMemoEntry() {
+    const btn = $("#memoEntry");
+    if (!memoEnabled()) { if (btn) btn.remove(); return; } // 未开启的科目不注入入口
+    if (!btn) return;
+    const n = memoView().counts.pending;
+    $("#memoCount").textContent = n;
+    btn.style.display = "";
+    btn.classList.toggle("zero", n === 0);
+    btn.title = n ? `未掌握考点 ${n} 个：只列知识点、不显示题干` : "考点对应题目都已掌握";
+  }
+  function memoSectionHTML(sec) {
+    const tag = sec.status === "master"
+      ? '<span class="memo-tag ok">✓ 已掌握</span>'
+      : '<span class="memo-tag bad">未掌握</span>';
+    const pieces = [];
+    if (sec.by.wrong) pieces.push(`答错 ${sec.by.wrong}`);
+    if (sec.by.mid) pieces.push(`待提高 ${sec.by.mid}`);
+    if (sec.by.todo) pieces.push(`未作答 ${sec.by.todo}`);
+    const stat = sec.status === "pending" ? `<span class="memo-stat">${pieces.join(" · ")}</span>` : "";
+    const types = (sec.types || []).map((t) => `<span class="memo-type">${esc(t)}</span>`).join("");
+    return `<details class="memo-sec${sec.status === "master" ? " done" : ""}" open>` +
+      `<summary><span class="memo-no">${esc(sec.id)}</span><b class="memo-title">${esc(sec.title)}</b>${types}${tag}${stat}</summary>` +
+      `<ul class="memo-list">` + (sec.items || []).map((it) => `<li class="memo-li d${it.d}">${mdBold(it.t)}</li>`).join("") + `</ul></details>`;
+  }
+  function memoSubHTML(c) {
+    return `<span class="rs-item">未掌握考点 <b>${c.pending}</b> / ${c.sections}</span>` +
+      `<span class="rs-item">未掌握题 <b>${c.questions - c.mastered}</b> / ${c.questions}</span>` +
+      `<span class="rs-item wrong">答错 <b>${c.wrong}</b></span>` +
+      `<span class="rs-item mid">待提高 <b>${c.mid}</b></span>` +
+      `<span class="rs-item todo">未作答 <b>${c.todo}</b></span>` +
+      (c.draft ? `<span class="rs-item">含草稿 <b>${c.draft}</b></span>` : "") +
+      `<span class="rs-tip">只列考点、不显示题干；该考点所挂的题全部 ≥80 分后自动移出「未掌握」。</span>`;
+  }
+  function memoRender() {
+    const view = memoView();
+    const c = view.counts;
+    $("#memoSub").innerHTML = memoSubHTML(c);
+    const chips = [["pending", `未掌握 ${c.pending}`], ["master", `已掌握 ${c.master}`], ["all", `全部 ${c.sections}`]];
+    $("#memoStatusChips").innerHTML = chips.map(([k, label]) =>
+      `<button type="button" class="chip${memoState.status === k ? " active" : ""}" data-status="${k}">${label}</button>`).join("");
+    const f = MEMO.filter(view, memoState);
+    if (!f.chapters.length) {
+      $("#memoBody").innerHTML = `<div class="memo-empty">` + (memoState.keyword
+        ? "没有匹配的考点，换个关键词或切到「全部」看看。"
+        : c.pending ? "当前筛选下没有考点。" : "🎉 考点对应题目都已掌握（≥80 分），考前翻翻思维导图保持手感即可。") + `</div>`;
+      return;
+    }
+    $("#memoBody").innerHTML = f.chapters.map((ch) =>
+      `<section class="memo-chap"><h3>${esc(ch.name)}<span class="memo-chap-count">未掌握 ${ch.pending} / ${ch.total} 考点</span></h3>` +
+      ch.sections.map(memoSectionHTML).join("") + `</section>`).join("");
+  }
+  function memoOpen() {
+    if (!memoEnabled()) return;
+    memoState.status = "pending";
+    memoState.keyword = "";
+    const kw = $("#memoSearch"); if (kw) kw.value = "";
+    memoRender();
+    const dlg = $("#memoDialog");
+    if (dlg && !dlg.open) dlg.showModal();
+    const body = $("#memoBody"); if (body) body.scrollTop = 0;
+  }
+  function bindMemo() {
+    if (!memoEnabled()) { const b = $("#memoEntry"); if (b) b.remove(); return; } // 未开启的科目不注入入口
+    const entry = $("#memoEntry");
+    if (entry) entry.addEventListener("click", memoOpen);
+    const dlg = $("#memoDialog");
+    if (!dlg) return;
+    $("#memoClose").addEventListener("click", () => dlg.close());
+    $("#memoStatusChips").addEventListener("click", (e) => {
+      const b = e.target.closest(".chip"); if (!b) return;
+      memoState.status = b.dataset.status;
+      memoRender();
+    });
+    $("#memoSearch").addEventListener("input", (e) => {
+      memoState.keyword = e.target.value;
+      memoRender();
     });
   }
 
@@ -1472,6 +1560,7 @@
   $("#shuffleAgain").style.display = shuffle ? "" : "none";
   bindToolbar();
   bindRecite(); // 科目 flags.recite 开启时才注入顶栏入口（未开启自动移除）
+  bindMemo();   // 科目 meta.memo 开启时才注入「考前重点记忆」入口（未开启自动移除）
   // ——— 多用户身份：点顶栏云同步芯片开弹层（看码/复制/输码切换/一键迁移）———
   (function identityUI() {
     const chip = $("#syncChip"), dlg = $("#idDialog");

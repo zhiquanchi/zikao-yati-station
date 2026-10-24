@@ -13,6 +13,7 @@
     <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，进度按同步码上云（多人共用站点各人独立）<span id="syncChip" class="sync-chip"></span></p>
     <a class="mm-entry" id="mmEntry" href="mindmap.html" style="display:none"></a>
     <button class="mm-entry recite-entry" id="reciteEntry" type="button" style="display:none" title="按答题记录找出未掌握题，按薄弱程度逐题背">📌 重点优先背 <span class="recite-count" id="reciteCount">0</span></button>
+    <button class="mm-entry memo-entry" id="memoEntry" type="button" style="display:none" title="只列考点、不显示题干的考前记忆清单">📚 考前重点记忆 <span class="memo-count" id="memoCount">0</span></button>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -87,7 +88,26 @@
   </div>
 </dialog>
 
-<dialog id="idDialog">
+<!-- 考前重点记忆：科目 meta.memo 开启时由 app.js 启用（按掌握度列考点串讲知识点，不含题干） -->
+<dialog id="memoDialog" aria-label="考前重点记忆">
+  <div class="memo-shell">
+    <header class="memo-head">
+      <div>
+        <h2>📚 考前重点记忆</h2>
+        <p class="memo-sub" id="memoSub"></p>
+      </div>
+      <div class="memo-head-actions">
+        <button type="button" id="memoClose" class="ghost">关闭 ✕</button>
+      </div>
+    </header>
+    <div class="memo-tools">
+      <div class="chips" id="memoStatusChips"></div>
+      <input id="memoSearch" type="search" placeholder="搜索考点/知识点关键词…" autocomplete="off">
+    </div>
+    <div class="memo-body" id="memoBody"></div>
+  </div>
+</dialog>
+
   <div class="id-card">
     <h3>云同步身份</h3>
     <p class="id-desc" id="idDesc"></p>
@@ -108,6 +128,7 @@
 <script src="sync.js"></script>
 <script src="identity.js"></script>
 <script src="recite.js"></script>
+<script src="memo.js"></script>
 <script src="subjects.js"></script>
 <script src="app.js"></script>
 <script src="subject-switch.js"></script>

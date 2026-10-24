@@ -43,17 +43,17 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 ## 仓库结构
 
 ```
-├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js recite.js subject-switch.js
+├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js recite.js memo.js subject-switch.js
 │   └── subjects.js           # 由 build 依据全部 subject.json 生成（切换器数据源，勿手改）
 ├── subjects/<科目>/
 │   ├── subject.json          # 科目身份唯一源：prefix/code/中文名/标题/storageKey/端口/特性开关/组卷参数/思维导图
-│   ├── data/                 # raw.txt + build_data.js（科目专属解析器）+ questions.json + 可选 explanations/essay_points/unordered
+│   ├── data/                 # raw.txt + build_data.js（科目专属解析器）+ questions.json + 可选 explanations/essay_points/unordered/memo_kp
 │   ├── data.js               # 生成物（有意提交；QUIZ_DATA.meta 即 subject.json 的浏览器侧镜像）
 │   ├── mindmap.html          # 考点思维导图页（数据内联，科目产物）
 │   └── grade/reference.md    # 可选：单选逐项解析参考资料（须与根导图逐字一致，test/ref_sync.test.js 守）
 ├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入）+ cmd/syncsvc（云同步存储：合并/校验/落库，科目无关）+ Dockerfile.sync
 ├── portal/                   # portal.js（科目清单驱动、api/store 纯转发到 sync-svc）· subjects.json（生成的门户路由清单）
-├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · build.js/stage.js/gen-compose.js/new-subject.js/gen-merge-golden.js
+├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · memo-lib.js 重点记忆装配 · build.js/stage.js/gen-compose.js/new-subject.js/gen-merge-golden.js
 ├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + 云同步 golden/身份/槽位交叉 + 代理/清单守卫
 ├── server.js                 # 本地开发服务器（科目参数、静态双根、代理线上）
 ├── start-ai.sh               # 本地 AI 判分一键起（科目参数）
@@ -70,6 +70,7 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 - **解析**：每题都有「解析」按钮，未作答也可随时点开；点开过解析的题记 `v` 标记，之后判分不洗白：随机组卷时不论得分一律计入第二档优先再考，「重做此题」清标记重新开始。凡未满分的题判分后解析自动展开（简答除外：默认只展开得分，解析手动点）。解析结构化排版：📍考点标签 → 答案行 → 逐条短句（关键词加粗）→ 简答附「✅ 得分点」编号列表。加粗由数据 `**…**` 标记驱动，未标注回落启发式。开启 `flags.explain` 的科目，单选解析区另有「🤖 逐项解析」：点按钮即出「生成中」占位，AI 逐选项讲解「为什么是 / 为什么不是本题答案」（标签 `✓ 本题答案` / `✗ 非本题答案`，「不正确的是/不属于」类否定式题干也不会读反）——先在科目参考资料找依据（📖），资料不足自动联网补充（🔍）；联网级输出偶发不可解析时自动加重格式提醒重出一次。结果按题缓存本机派生键 `.expl` 并随 v2 云同步上云（跨设备复用，不重复烧 token）；失败时面板不消失，留「⚠ 错误条 + 重试」，网络中断/上游超时/输出解析失败都有明确提示。file:// 或 AI 不可用时不出现该按钮。
 - **随机组卷（约 100 分，目标分与题型分值可在 subject.json `paper` 配置）**：勾选后按分值加权抽题组模拟卷，顶部横幅显示卷面构成。出题权重：简答 > 填空 > 单选；同题型内**从未在刷题/组卷中出现过的最易入选（×8）**，出现过但看过解析/未作答/答错的次之（×4），出现过且 60~79 正常（×1），出现过且已掌握（≥80 未看解析）的降频（×0.3）。「出现过」＝题卡在刷题或组卷视图滚动进过视口、进过卷面、或有任何作答/看解析记录（存本机派生键 `.seen`，只存本机不入云同步；背答案模式滚动不算；「清空记录」连标记一并清零回到最高档）。**组卷范围跟随当前筛选**（章节/题型/状态/搜索圈池；池空不组卷、勾选回退、换一批保留原卷）；卷面生成后固定、刷新不变；组卷即全新（卷内旧作答清空并先归档进本机历史 `.hist`，每题留最近 10 次、只存本机、界面不显示）；组卷后状态筛选不再影响卷面（只圈池），章节/题型/搜索仍卷内收窄；题序先单选再填空后简答；「🎲 换一批」按最新掌握情况重组。
 - **📌 重点优先背（科目 `flags.recite` 开启，现为网络安全）**：顶栏入口按当前作答记录自动找出未掌握题（首次评分 <80，含未作答），按「答错（分低在前）→ 待提高 60~79 → 未作答」排优先队列；同档简答/填空先背（分值高、易失分），未作答里点开过解析的优先。全屏逐题背题卡：答案、得分点与解析直接展开（单选正确项标绿），可按未掌握档位/题型筛选、方向键左右翻题；**「✍ 开始练习 / 重做并练习」在当前背题页内直接出作答表单（不跳主列表）**，提交后原地显示得分、逐项反馈与解析并更新掌握与队列（已判分题按本次成绩覆盖原记录、取消不写盘）；练到 ≥80 分自动移出队列（统计/筛选/组卷权重仍只认首次评分）。**手机/窄屏打开时默认收起统计与筛选**（头部「显示/隐藏筛选」按钮随时切换，收起后仅保留一行战况），把最大高度留给题卡。入口角标实时显示队列题数；排序为纯函数 `web/recite.js`（`test/recite.test.js` 守），不新增存储键。
+- **📚 考前重点记忆（科目 `meta.memo` 开启，现为操作系统）**：顶栏入口按当前作答记录把考点串讲拆出的知识点**按掌握度过滤**——只列考点与要点、**不显示题干、不判分**，不新增存储键。清单按章分节（每节＝串讲一个小节，带“单选/填空/简答”题型标签），考点所挂题目全部 ≥80 分（与重点优先背同一掌握线）即标为「已掌握」并从「未掌握」默认视图移出，标注「答错 / 待提高 / 未作答」题数分布；可切「未掌握 / 已掌握 / 全部」、按考点标题或知识点文字搜索、点标题折叠单节。手机端战况横滑、说明收起，把高度留给知识点。数据由 `scripts/memo-lib.js` 在 build 时从科目导图 md（同时是 `grade/reference.md`）解析并挂题目 id，前端纯函数 `web/memo.js`（`test/memo.test.js` 守）只读 store。
 - **批量提交**：作答自动存草稿（刷新不丢），底部悬浮条「已作答未提交 N 题」→「批量提交评分」一次性判分弹汇总（题数/平均分/满分题数）。
 - 顶部按章节/题型/状态（未作答、待提高 <60、已掌握 ≥80）筛选，支持题干搜索、背答案模式。
 - **手机适配**：≤640px 工具栏折叠「☰ 筛选设置」吸顶；输入控件 16px 防 iOS 聚焦缩放；触控热区加大、悬浮条避手势横条。手机连同 WiFi：`HOST=0.0.0.0 bun run start <科目>` 开 `http://<局域网IP>:<科目端口>/`。
@@ -100,6 +101,7 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 ```
 
 - 科目 `data/build_data.js` 只负责「把自己的源 docx 版式解析成规范题目数组」；装配段（unordered 并列互换标记、简答精简考点 `essay_points.json` 覆盖与 `**关键词**` 剥标、主观题解析 `explanations.json` 合并、变体生成、产物落盘、meta 注入）全走共享层 `scripts/build-lib.js`，勿在科目里重复实现。
+- 「考前重点记忆」数据随 `bun run build` 生成：装配层读科目 `subject.json` 的 `mindmap.file`（考点串讲 md）拆成「章→节→要点」，再用 `data/explanations.json` 里的「考点X.Y」标注把题目挂到小节；没有标注的题（如纯单选）在 `data/memo_kp.json` 人工补映射（`{题号: ["X.Y"]}`，缺映射 build 会告警）。新增/调整串讲小节后重跑 build 即可，前端不做解析。
 - 撰写新题解析必须逐题参考该科目串讲/考点资料并标注考点；简答得分点用大模型逐题精简（只留拿分关键词），措辞须保持参考答案词序，否则「原文作答≈满分」锚点（逐科目测试 ≥95）会掉分。
 - 判分口径升级时（如填空重算迁移）跑全量 `bun test`；合并/校验逻辑改动会被 `test/fixtures/merge_golden.json` 单一夹具拦截——前端 sync.js（`test/merge_xcheck.test.js`）与 Go syncsvc（`grade-svc/store_golden_test.go`）跨语言两份实现各自断言同一夹具，改口径须两实现同改后重跑 `scripts/gen-merge-golden.js` 刷新，单侧漂移必红；不再有「三处同改」口头约定。
 
@@ -114,7 +116,7 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 ### os13180 · 操作系统（13180）
 
-190 题：58 单选 / 100 填空 / 32 简答；源 docx《2026年10月自考13180操作系统押题及答案解析汇总》按「[单选]/[填空题]/[简答题]+解析」逐行版式解析。132 道填空/简答解析依据《操作系统考点串讲》（`~/Downloads/操作系统.pdf`）逐题撰写（`data/explanations.json`），简答精简考点在 `data/essay_points.json`；unordered 并列互换 32 题。存储键 `os13180.v1`。思维导图：全书 8 章 40 节 157 考点（文字版 `操作系统考点串讲-思维导图.md`，与 `grade/reference.md` 逐字同步）；`flags.explain: true`（单选逐项解析开启）。
+190 题：58 单选 / 100 填空 / 32 简答；源 docx《2026年10月自考13180操作系统押题及答案解析汇总》按「[单选]/[填空题]/[简答题]+解析」逐行版式解析。132 道填空/简答解析依据《操作系统考点串讲》（`~/Downloads/操作系统.pdf`）逐题撰写（`data/explanations.json`），简答精简考点在 `data/essay_points.json`；unordered 并列互换 32 题。存储键 `os13180.v1`。思维导图：全书 8 章 40 节 157 考点（文字版 `操作系统考点串讲-思维导图.md`，与 `grade/reference.md` 逐字同步）；`flags.explain: true`（单选逐项解析开启）。**考前重点记忆**：`meta.memo` 开启，同一份串讲 md 拆成 8 章 46 个考点小节（157 条要点）并挂到 190 道题，按作答记录过滤出未掌握考点。
 
 ### net04751 · 计算机网络安全（04751）
 
