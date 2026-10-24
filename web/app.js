@@ -334,13 +334,14 @@
     if (q.type === "single") {
       const picked = draftRec && typeof draftRec.u === "string" ? draftRec.u : null;
       const opts = Array.isArray(q.options) ? q.options : [];
-      body = `<div class="opts">` + opts.map((o) =>
+      body = `<div class="stem">${esc(q.stem)}</div><div class="opts">` + opts.map((o) =>
         `<div class="opt${o.key === picked ? " picked" : ""}" data-key="${o.key}"><span class="key">${o.key}</span><span>${esc(o.text)}</span></div>`).join("") + `</div>`;
     } else if (q.type === "blank") {
       body = `<div class="stem">${stemHTML(q)}</div>`;
     } else {
       const pts = Array.isArray(q.points) ? q.points : [];
-      body = `<textarea class="ans" rows="1" spellcheck="false">${esc(essayTextOf(draftRec && draftRec.u))}</textarea>
+      body = `<div class="stem">${esc(q.stem)}</div>` +
+        `<textarea class="ans" rows="1" spellcheck="false">${esc(essayTextOf(draftRec && draftRec.u))}</textarea>
         <div class="hint-line">按要点写出答案，系统对照参考答案的 ${pts.length} 个得分点，按关键词覆盖度自动打分。</div>`;
     }
     return `<article class="rcard recite-practice" data-id="${q.id}">
@@ -397,7 +398,7 @@
     let body = "";
     if (q.type === "single") {
       const opts = Array.isArray(q.options) ? q.options : [];
-      body = `<div class="opts recite-opts">` + opts.map((o) =>
+      body = `<div class="stem">${esc(q.stem)}</div><div class="opts recite-opts">` + opts.map((o) =>
         `<div class="opt${o.key === q.answer ? " right" : ""}"><span class="key">${o.key}</span><span>${esc(o.text)}</span>` +
         (o.key === q.answer ? '<span class="opt-ans ok">✓ 正确答案</span>' : "") + `</div>`).join("") + `</div>` +
         `<div class="rcard-ans">✅ 正确答案：<b>${esc(q.answer)}</b> · ${esc((opts.find((o) => o.key === q.answer) || {}).text || "")}</div>`;
@@ -409,10 +410,10 @@
       if (q.explain) body += `<div class="explain show">${explainHTML(q, { noAI: true, noAns: true })}</div>`; // 无手写解析时不重复参考答案（应填已展示）
     } else {
       const pts = Array.isArray(q.points) ? q.points : [];
-      body = pts.length
+      body = `<div class="stem">${esc(q.stem)}</div>` + (pts.length
         ? `<div class="rcard-points"><h4>🎯 得分点（${pts.length} 条，背加粗关键词）</h4><ol>` +
           pts.map((p, i) => `<li>${rich(pointTexts(q, i, p), q)}</li>`).join("") + `</ol></div>`
-        : q.ref ? `<div class="rcard-ans">✅ 参考答案：${esc(q.ref)}</div>` : ""; // 通用开关：未来科目缺 points 时回落整段答案
+        : q.ref ? `<div class="rcard-ans">✅ 参考答案：${esc(q.ref)}</div>` : ""); // 通用开关：未来科目缺 points 时回落整段答案
       if (q.explain) body += `<div class="explain show">${explainHTML(q, { noAI: true, noPts: true })}</div>`;
       if (q.ref) body += `<details class="rcard-ref"><summary>📄 完整参考答案</summary><p>${esc(q.ref)}</p></details>`;
     }
@@ -469,7 +470,7 @@
     let detail = "";
     if (q.type === "single") {
       const opts = Array.isArray(q.options) ? q.options : [];
-      detail = `<div class="opts">` + opts.map((o) => {
+      detail = `<div class="stem">${esc(q.stem)}</div><div class="opts">` + opts.map((o) => {
         const right = o.key === q.answer, chosen = o.key === r.input;
         const c = right ? "right" : chosen ? "wrong" : "dim";
         return `<div class="opt ${c}"><span class="key">${o.key}</span><span>${esc(o.text)}</span>` +
@@ -495,7 +496,7 @@
         refBlock(q);
     } else {
       const per = out.per || [];
-      detail = `<div class="point-list">` + per.map((p, pi) => {
+      detail = `<div class="stem">${esc(q.stem)}</div><div class="point-list">` + per.map((p, pi) => {
         const cn = { hit: "命中要点", part: "部分命中", miss: "未答到" }[p.state];
         const bar = `<div class="cov-track" style="color:${p.state === "hit" ? "var(--ok)" : p.state === "part" ? "var(--warn)" : "var(--bad)"}"><div class="cov-bar" style="width:${Math.round(p.cov * 100)}%"></div></div>`;
         const frags = p.segs && p.segs.length ? `<div class="frags">答到片段：${p.segs.slice(0, 6).map((seg) => `<span>${esc(seg)}</span>`).join("")}</div>` : "";
