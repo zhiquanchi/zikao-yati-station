@@ -20,7 +20,8 @@
   let shuffle = false, showRef = false;
   // 重点优先背弹层状态：all＝按薄弱程度排好的全队列，list＝当前分组/题型筛选后的可见队列；
   // mode＝back（背题卡）| practice（当前页内作答），result＝提交后的成绩展示（不跳转主列表）
-  const recite = { all: [], list: [], idx: 0, group: "all", type: "all", mode: "back", result: null, oldScore: null };
+  // folded＝收起统计/筛选只留题卡（手机默认收起，把高度让给题目；foldTouched＝用户手动切换后本次会话记住）
+  const recite = { all: [], list: [], idx: 0, group: "all", type: "all", mode: "back", result: null, oldScore: null, folded: false, foldTouched: false };
   const QBYID = Object.fromEntries(D.questions.map((q) => [q.id, q]));
 
   // 判分口径升级迁移：已判分的填空记录用当前引擎重算（含 unordered 跨空匹配），
@@ -257,6 +258,28 @@
   // 科目由 flags.recite 开启（subject.json→meta）。
   function reciteEnabled() { return !!(D.meta.flags && D.meta.flags.recite) && !!RECITE; }
   function reciteAll() { return RECITE.build(D.questions, store); }
+  // 窄屏默认收起统计/筛选；「显示/隐藏筛选」随时切换，题卡区自动占满剩余高度
+  function reciteNarrow() {
+    return typeof window.matchMedia === "function" && window.matchMedia("(max-width: 900px)").matches;
+  }
+  function reciteUpdateFold() {
+    const shell = $(".recite-shell");
+    if (shell) shell.classList.toggle("folded", !!recite.folded);
+    const btn = $("#reciteFold");
+    if (btn) {
+      btn.textContent = recite.folded ? "▸ 显示筛选" : "▾ 隐藏筛选";
+      btn.setAttribute("aria-expanded", recite.folded ? "false" : "true");
+    }
+    const sub = $("#reciteSub");
+    if (sub) {
+      if (recite.folded) {
+        const c = RECITE.counts(recite.all);
+        sub.textContent = `未掌握 ${c.total} · ❌ ${c.wrong} · ⚠️ ${c.mid} · ⬜ ${c.todo}`; // 收起后仅留一行战况，节省高度
+      } else {
+        sub.textContent = `${D.meta.name} · 按答题记录找出未掌握题，薄弱优先`;
+      }
+    }
+  }
   function updateReciteEntry() {
     const btn = $("#reciteEntry");
     if (!reciteEnabled()) { if (btn) btn.remove(); return; } // 未开启的科目不注入入口
@@ -272,7 +295,7 @@
     reciteLeavePractice();
     recite.all = reciteAll();
     recite.group = "all"; recite.type = "all"; recite.idx = 0;
-    $("#reciteSub").textContent = `${D.meta.name} · 按答题记录找出未掌握题，薄弱优先`;
+    if (!recite.foldTouched) recite.folded = reciteNarrow(); // 手机默认收起，让题卡占满屏幕
     reciteRenderFilters();
     reciteApply();
     const dlg = $("#reciteDialog");
@@ -303,6 +326,7 @@
         `<span class="rs-item todo">未作答 <b>${c.todo}</b></span>` +
         `<span class="rs-tip">排序：答错（分低在前）→ 待提高（60~79）→ 未作答；同档简答/填空先背，未作答中看过解析的优先。</span>`
       : `<span class="rs-ok">🎉 全部 ${total} 题已掌握（≥80 分），暂时没有需要重点背的题。</span>`;
+    reciteUpdateFold(); // 分数/队列变化后同步收起态的一行战况
   }
   function reciteRenderQueue() {
     const box = $("#reciteQueue");
@@ -610,6 +634,11 @@
     if (entry) entry.addEventListener("click", reciteOpen);
     const dlg = $("#reciteDialog");
     if (!dlg) return;
+    $("#reciteFold").addEventListener("click", () => {
+      recite.folded = !recite.folded;
+      recite.foldTouched = true; // 手动选择后本次会话保持，不再被窄屏默认值覆盖
+      reciteUpdateFold();
+    });
     $("#reciteClose").addEventListener("click", () => dlg.close());
     $("#recitePrev").addEventListener("click", () => reciteStep(-1));
     $("#reciteNext").addEventListener("click", () => {

@@ -494,3 +494,18 @@ button.mm-entry { border: 0; cursor: pointer; font-family: inherit; }
 .recite-result .opts .opt.wrong:hover { border-color: var(--bad); background: var(--bad-soft); }
 .recite-result .explain.show { margin-top: 10px; }
 .recite-result .ref-block { margin-top: 10px; }
+
+/* ——— 重点优先背 · 手机/窄屏「隐藏筛选」：收起统计+筛选项，把高度让给题卡 ——— */
+.recite-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.recite-head > div:first-child { min-width: 0; }
+#reciteFold { background: rgba(255,255,255,.16); border-color: transparent; color: #fff; white-space: nowrap; }
+#reciteFold:hover { background: rgba(255,255,255,.3); border-color: transparent; color: #fff; }
+.recite-shell.folded .recite-summary,
+.recite-shell.folded .recite-filters { display: none; }
+.recite-shell.folded .recite-head { padding: 10px 14px; }
+.recite-shell.folded .recite-body { padding-top: 8px; }
+.recite-shell.folded .recite-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) {
+  .recite-head-actions { gap: 6px; }
+  #reciteFold { padding: 7px 10px; font-size: 13px; }
+}
