@@ -2,7 +2,7 @@
 // 把共享引擎 web/ 与科目产物合成为 build/stage/<prefix>/ —— 部署目录的唯一事实源是共享引擎，
 // 这里只是按门户静态根的形态拼一次（deploy.sh 与本地 file:// 预览都吃这份暂存）。
 import path from "node:path";
-import { mkdirSync, rmSync, cpSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, cpSync, existsSync, chmodSync, readdirSync } from "node:fs";
 import { loadSubjects, findSubject, WEB_DIR, ROOT } from "./config.js";
 
 const ENGINE_FILES = ["index.html", "styles.css", "app.js", "grading.js", "sync.js", "identity.js", "recite.js", "memo.js", "subject-switch.js", "subjects.js"];
@@ -24,5 +24,8 @@ for (const s of subs) {
     if (existsSync(src)) cpSync(src, path.join(dest, f));
   }
   if (!existsSync(path.join(dest, "data.js"))) throw new Error(`${s.slug} 缺 data.js，请先 bun run build ${s.slug}`);
+  // 统一读权限：编辑器/写文件工具新建的文件可能带 600，进容器后 bun 以非 root 运行会 EACCES（线上静态 500）
+  chmodSync(dest, 0o755);
+  for (const ent of readdirSync(dest)) chmodSync(path.join(dest, ent), 0o644);
   console.log(`已暂存 build/stage/${s.prefix}/（${s.pageTitle}）`);
 }
