@@ -20,12 +20,12 @@ bun run start os13180        # 本地跑一科（默认端口读 subject.json；
 bun run build [科目…]        # 重建题库 data.js/questions.json 并刷新科目清单（缺省＝全部）
 bun run stage [科目…]        # 合成部署形态 build/stage/<前缀>/（也可双击其中 index.html 本机直开）
 ./start-ai.sh os13180        # 本地联调 AI 判分（后台 Go 服务 + 前台静态站，需先 export QWEN_API_KEY=sk-xxx）
-bun test                     # 共享引擎回归 + 逐科目数据不变量 + 云同步 golden/槽位回归（store.test.js 构建并起 Go sync-svc，依赖 go 工具链）
-cd grade-svc && go test ./... # Go 判分与云同步服务单测（假上游/临时 SQLite，零真实网络）
+bun test                     # 引擎回归 + 逐科目数据不变量 + 云同步/认证/代理回归（需 PostgreSQL：先 scripts/test-pg.sh 或 export TEST_DATABASE_URL）
+cd grade-svc && go test ./... # Go 判分/认证/云同步单测（假上游 + 测试 PostgreSQL；未设 TEST_DATABASE_URL 时 DB 用例跳过）
 ./deploy.sh                  # 线上一键发布（遍历全部科目，幂等）
 ```
 
-- 线上统一入口 http://121.40.43.229/ （裸根自动落主科目操作系统）。**部署约定：本机不常驻服务**——`bun run start` 的 `/api/grade` 与 `/api/store` 默认都代理到线上，本机与线上同一同步码即同一份云端进度（未设码的旧版设备继续用旧版全局槽，本机线上同样互通）；`./start-ai.sh` 仅本地联调 AI 时用 `GRADE_API` 覆盖为本地 Go 服务。
+- 线上统一入口 http://121.40.43.229/ （裸根自动落主科目操作系统）。**部署约定：本机不常驻服务**——`bun run start` 的 `/api/grade`、`/api/auth` 与 `/api/store` 默认都代理到线上，注册/登录后本机与线上同账号即同一份云端进度；`./start-ai.sh` 仅本地联调 AI 时用 `GRADE_API` 覆盖为本地 Go 服务（本地未配 `AUTH_VERIFY_URL`，判分按开发模式放行）。
 
 ## 新增一个科目（工作流）
 
@@ -43,7 +43,7 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 ## 仓库结构
 
 ```
-├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js recite.js memo.js subject-switch.js
+├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js auth.js recite.js memo.js subject-switch.js
 │   └── subjects.js           # 由 build 依据全部 subject.json 生成（切换器数据源，勿手改）
 ├── subjects/<科目>/
 │   ├── subject.json          # 科目身份唯一源：prefix/code/中文名/标题/storageKey/端口/特性开关/组卷参数/思维导图
@@ -51,10 +51,10 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 │   ├── data.js               # 生成物（有意提交；QUIZ_DATA.meta 即 subject.json 的浏览器侧镜像）
 │   ├── mindmap.html          # 考点思维导图页（数据内联，科目产物）
 │   └── grade/reference.md    # 可选：单选逐项解析参考资料（须与根导图逐字一致，test/ref_sync.test.js 守）
-├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入）+ cmd/syncsvc（云同步存储：合并/校验/落库，科目无关）+ Dockerfile.sync
-├── portal/                   # portal.js（科目清单驱动、api/store 纯转发到 sync-svc）· subjects.json（生成的门户路由清单）
-├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · memo-lib.js 重点记忆装配 · build.js/stage.js/gen-compose.js/new-subject.js/gen-merge-golden.js
-├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + 云同步 golden/身份/槽位交叉 + 代理/清单守卫
+├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入）+ cmd/syncsvc（账号/会话/云同步存储，PostgreSQL）+ Dockerfile.sync
+├── portal/                   # portal.js（科目清单驱动、api/auth 与 api/store 纯转发到 sync-svc，透传 Cookie）· subjects.json（生成的门户路由清单）
+├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · memo-lib.js 重点记忆装配 · build.js/stage.js/gen-compose.js/new-subject.js/gen-merge-golden.js/test-pg.sh
+├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + 云同步 golden/身份/槽位/认证交叉 + 代理/清单守卫
 ├── server.js                 # 本地开发服务器（科目参数、静态双根、代理线上）
 ├── start-ai.sh               # 本地 AI 判分一键起（科目参数）
 └── deploy.sh                 # 线上一键发布（遍历科目）
@@ -74,8 +74,14 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 - **批量提交**：作答自动存草稿（刷新不丢），底部悬浮条「已作答未提交 N 题」→「批量提交评分」一次性判分弹汇总（题数/平均分/满分题数）。
 - 顶部按章节/题型/状态（未作答、待提高 <60、已掌握 ≥80）筛选，支持题干搜索、背答案模式。
 - **手机适配**：≤640px 工具栏折叠「☰ 筛选设置」吸顶；输入控件 16px 防 iOS 聚焦缩放；触控热区加大、悬浮条避手势横条。手机连同 WiFi：`HOST=0.0.0.0 bun run start <科目>` 开 `http://<局域网IP>:<科目端口>/`。
-- 作答记录与得分存浏览器 localStorage（键基座 = subject.json `storageKey` + 同步码分区后缀，派生键 `.shuffle` `.syncsnap` `.synccleared` `.expl` `.hist` `.seen`；未签发同步码的旧版设备仍用裸键），刷新不丢；「清空记录」三道闸门（确认 → 输入 6 位随机码 → 最终确认），连历史留档一并清除并同步云端（只清本人槽位）。
-- **作答进度云同步（多用户）**：经同源 `api/store[/<同步码>]`（`sync.js`）自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」在本人槽位内全局压制；顶栏「☁️ 已同步 / 未联网」提示，**点芯片管理同步码**。云端槽位 =（科目, 同步码）由 Go 服务 `grade-svc/cmd/syncsvc` 落 SQLite：新访客浏览器静默签发 6 位私有码（各人进度互不干扰、互不可猜）；换手机/电脑输入同一个码即续用（全部科目共用一码）；同设备输不同码即切换用户。**不输码的设备继续读写旧版全局槽**（`user=''`，站长存量进度无缝续用），旧版有数据的设备可在芯片弹层「把这台的进度换成同步码」一键迁移。本机与线上读写同一云端（`STORE_API` 默认线上；置 `off` 可禁用）。接口仍公开无鉴权，勿存敏感数据；file:// 打开自动跳过云同步。
+- 作答记录与得分存浏览器 localStorage（键基座 = subject.json `storageKey` + 账号 slot 分区后缀，派生键 `.shuffle` `.syncsnap` `.synccleared` `.expl` `.hist` `.seen`），刷新不丢；未登录访客用匿名码分区，**只存本机、不上云**。「清空记录」三道闸门（确认 → 输入 6 位随机码 → 最终确认），连历史留档一并清除并同步云端（只清本人槽位）。
+- **账号与云同步（多用户）**：邮箱 + 密码注册/登录（顶栏「🔑 登录 / ☁️ 已同步」芯片）。登录后经同源 `api/auth/*` 与 `api/store[/<slot>]` 自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」在本人槽位内全局压制。云端槽位 =（科目, 账号 slot），由 Go `grade-svc/cmd/syncsvc` 落 **PostgreSQL**；注册默认开放（`REGISTRATION_OPEN=0` 可关，`MAX_USERS` 可限总量），密码 PBKDF2-SHA256 600k + 随机盐，会话 Cookie `HttpOnly; SameSite=Lax; Path=/`（30 天，`Secure` 由 `COOKIE_SECURE`/`PUBLIC_ORIGIN` 自动判断）。**未登录可浏览题库与本地判分，云同步与 AI 判分返回 401**；退出登录清 Cookie，换设备用同一邮箱登录即续用。接口已鉴权，但仍建议勿存敏感数据；file:// 打开自动跳过云同步。
+- **邮件服务（阿里云 DirectMail）**：邮箱验证（24 小时链接）与找回密码（30 分钟链接，单次使用，库里只存 SHA-256）；重置成功会删除该用户全部会话并把邮箱标记为已验证。`MAIL_DRIVER=none`（默认）时相关接口返回 503，注册/登录不受影响。启用步骤：
+  1. 阿里云控制台开通「邮件推送 DirectMail」，认证发件域名/地址并创建发件地址（如 `no-reply@example.com`；新账号可能处于沙箱模式，需先把收件人加入白名单）。
+  2. 创建 RAM 用户，授予最小权限 `dm:SingleSendMail`，生成 AccessKey ID/Secret。
+  3. 编辑服务器 `/opt/exam-sites/.env`：`MAIL_DRIVER=aliyun`、`ALIYUN_ACCESS_KEY_ID=...`、`ALIYUN_ACCESS_KEY_SECRET=...`、`ALIYUN_DM_ACCOUNT_NAME=no-reply@example.com`、`ALIYUN_DM_FROM_ALIAS=自考押题站`、`PUBLIC_ORIGIN=http://121.40.43.229`（换域名后改 https）。
+  4. `docker compose up -d sync-svc` 重启；日志出现「📧 邮件服务已启用」即生效。
+  - 可选 `REQUIRE_EMAIL_VERIFY=1` 强制未验证邮箱不能登录；未配置邮件时忘记密码仍可用管理员 CLI：`docker compose exec sync-svc ./sync-svc -reset-password <email>`。
 - **考点思维导图**：各科目顶栏入口进 `mindmap.html`（按章分屏渐进披露、SVG 图形视图 + 列表视图、押题联动标注、搜索按章、状态存本机），文字版为科目根的导图 md。
 
 ### 判分说明
@@ -86,8 +92,8 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 
 简答在本机估分后异步升级为千问语义判分（🤖 徽标 + 逐要点点评 + 整段总评「AI 完整回复」折叠块）；`grade-svc/` 为多科目共享的 Go 服务（OpenAI Go SDK · 兼容模式 · 默认 `qwen3.8-flash`），分数口径与本机引擎一致（三档锚点），同「题干+要点+作答」服务内缓存不重复计费。**科目身份经 `SUBJECT_DIR` 注入**：阅卷 prompt 科目名、逐项解析参考资料与资料名全部读自科目目录（`subject.json` + `grade/reference.md`），代码中无科目硬编码；未设 `SUBJECT_DIR` 直接拒启。
 
-- 本地：`export QWEN_API_KEY=sk-xxx && ./start-ai.sh <科目>`（判分端口读 subject.json；os=8792、net=8794）。
-- 生产：`--build-arg SUBJECT=<科目目录>` 出每科目镜像（上下文 = 仓库根），每科目一个容器、容器内统一 8792、**有意不映射宿主端口**，密钥只在 Go 进程环境；**严禁把密钥写进前端源码或 data 文件**。
+- 本地：`export QWEN_API_KEY=sk-xxx && ./start-ai.sh <科目>`（判分端口读 subject.json；os=8792、net=8794）。本地未配置 `AUTH_VERIFY_URL` 时判分按开发模式放行；线上由 compose 注入，未登录返回 401。
+- 生产：`--build-arg SUBJECT=<科目目录>` 出每科目镜像（上下文 = 仓库根），每科目一个容器、容器内统一 8792、**有意不映射宿主端口**，密钥只在 Go 进程环境；**严禁把密钥写进前端源码或 data 文件**。线上判分额外要求登录：会话校验走 sync-svc 内网 `/internal/session`（45s 缓存，失败关闭）。
 - **单选逐项解析复用 `/api/grade` 同一端点**（请求体 `task:"explain"`）：第一级把科目参考资料全文交给模型判「能否全部找到依据」（📖），found=false 或失败则第二级 `enable_search` 联网重出（🔍）；`correct` 一律按题面答案推导。超时预算：Go 85s → server.js/门户代理 95s → 线上 nginx 120s（deploy.sh 维护）。
 - 降级：file://、服务未启动或未配 Key 时简答保持本机判分（标「本机估分」），其余不受影响；可选 `QWEN_MODEL`。
 - AI 结果随作答存记录 `g` 字段，刷新/换筛选直接恢复不再打网络；单选与填空始终本机即时判分。
@@ -107,8 +113,9 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 ## 线上部署与发布
 
-- `./deploy.sh`：探测免密 SSH（6000/22）→ 遍历 `subjects/` → `bun run build` + `bun run stage` → 本机交叉构建 linux/amd64 镜像（`exam-portal` + `exam-sync` + 每科目 `exam-grade-<prefix>`）→ `docker save` 管道上传 → 服务器 `docker load` + 生成的 compose 起（门户绑 127.0.0.1:8799，云同步与判分服务不映射端口）→ nginx 按 Host=IP 逐科目前缀 location 循环生成（读写超时 120s）→ 逐科目 curl 探活（含 `/api/store` 云同步链路与非法码 400）。幂等可重复；compose 为 `scripts/gen-compose.js --remote` 生成物（勿手改）。
-- 云同步 SQLite 用命名卷 `portal-store`，现由 Go sync-svc 容器挂载（卷沿用旧名——线上旧版 sync.db 原地复用，sync-svc 启动自动把单槽表迁移为 (科目,用户) 复合主键并回填 `user=''`；服务器 docker 为 snap 版，bind mount 必失败）。
+- `./deploy.sh`：探测免密 SSH（6000/22）→ 遍历 `subjects/` → `bun run build` + `bun run stage` → 本机交叉构建 linux/amd64 镜像（`exam-portal` + `exam-sync` + 每科目 `exam-grade-<prefix>`）→ `docker save` 管道上传 → 服务器 `docker load` + 生成的 compose 起（门户绑 127.0.0.1:8799，PostgreSQL/云同步/判分服务不映射端口）→ nginx 按 Host=IP 逐科目前缀 location 循环生成（读写超时 120s）→ 逐科目 curl 探活（`/api/store` 未登录 401、`/api/auth/me` 401、非法码 400）。幂等可重复；compose 为 `scripts/gen-compose.js --remote` 生成物（勿手改）。
+- 账号与云同步数据存 PostgreSQL：compose 内 `postgres:17-alpine` + 命名卷 `pgdata`，仅编排内部网络可达；`POSTGRES_PASSWORD` 与 `INTERNAL_TOKEN` 由 `deploy.sh` 首次在远端 `.env` 自动生成（勿覆盖已有值）。旧 SQLite 卷 `portal-store` 不再挂载，保留在宿主机供导出/回滚；首次切换前 deploy 会停旧 sync-svc 并把该卷打包到 `/opt/exam-sites/backups/`。
+- 旧 SQLite 数据不会自动导入 PostgreSQL：升级后在旧浏览器登录一次，本机 localStorage 会自动并入账号并推送；若本机数据已丢，可从备份卷导出后手工导入。
 - 本机全栈 docker 联调：`bun run build && bun run stage && bun scripts/gen-compose.js --build > docker-compose.local.yml && docker compose -f docker-compose.local.yml up -d --build`。
 - **每次本地更新提交后必须跑 `./deploy.sh`** 并 curl 验证线上已生效。
 
@@ -124,4 +131,4 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 ## 兼容与历史
 
-- 线上前缀 `/os/` `/net/`、localStorage 键、云端 store 科目主键与旧三仓（`~/自考操作系统` `~/自考网络安全` `~/自考押题门户`）完全一致——**已存作答进度无缝续用**。多用户改造（同步码）不破坏这条基线：不设置同步码的设备照旧读写 `user=''` 全局槽（与旧主键一一对应，旧库由 sync-svc 启动时自动迁移），码槽是纯增量。旧三仓自本仓启用后仅作存档，不再改动；网络安全站合入共享引擎后自动获得组卷跟随筛选、历史归档、单选解析内联等此前仅操作系统站有的能力。
+- 线上前缀 `/os/` `/net/`、localStorage 键基座、云端 `user_slot=''` 旧槽与旧三仓（`~/自考操作系统` `~/自考网络安全` `~/自考押题门户`）完全一致——**已存作答进度无缝续用**。多用户改造（账号登录）不破坏这条基线：旧 SQLite 槽位数据仍保留在数据库/备份中，账号槽是纯增量；登录时本机匿名/旧版分区会自动并入账号分区。旧三仓自本仓启用后仅作存档，不再改动；网络安全站合入共享引擎后自动获得组卷跟随筛选、历史归档、单选解析内联等此前仅操作系统站有的能力。
