@@ -1,3 +1,5 @@
+> **已被 v2 架构取代（2026-10-26）**：本文档记录的是多用户改造当时的设计，文中 `sync-svc`、`backend/portal`、`/api/store`、`frontend/grading.js` 等均已删除。当前架构以根目录 `AGENTS.md` 为准：前端纯视图 + 单一 Go API（`backend/grade-svc/cmd/apivc`）+ PostgreSQL。本文仅作历史存档。
+
 # 多用户登录改造方案（含 PostgreSQL 迁移）
 
 > 状态：**阶段 0~3 与邮件服务已实施并上线**（2026-10-26）；域名 + TLS 待做。邮件默认 `MAIL_DRIVER=none`（相关接口 503），填入阿里云 DirectMail 凭据后启用。实施差异与验证结果见文末「附录 B」。
