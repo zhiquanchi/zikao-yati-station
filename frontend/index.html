@@ -10,7 +10,7 @@
 <header class="topbar">
   <div class="wrap">
     <h1>押题练习</h1>
-    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，登录后进度按账号上云（匿名仅本机）<span id="syncChip" class="sync-chip"></span></p>
+    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 判分与进度由服务端保存，登录后跨设备续用<span id="syncChip" class="sync-chip"></span></p>
     <a class="mm-entry" id="mmEntry" href="mindmap.html" style="display:none"></a>
     <button class="mm-entry recite-entry" id="reciteEntry" type="button" style="display:none" title="按答题记录找出未掌握题，按薄弱程度逐题背">📌 重点优先背 <span class="recite-count" id="reciteCount">0</span></button>
     <button class="mm-entry memo-entry" id="memoEntry" type="button" style="display:none" title="只列考点、不显示题干的考前记忆清单">📚 考前重点记忆 <span class="memo-count" id="memoCount">0</span></button>
@@ -167,15 +167,8 @@
     </div>
   </dialog>
 
-<script src="data.js"></script>
-<script src="grading.js"></script>
-<script src="sync.js"></script>
-<script src="identity.js"></script>
-<script src="auth.js"></script>
-<script src="recite.js"></script>
-<script src="memo.js"></script>
-<script src="subjects.js"></script>
+<script src="api.js"></script>
+<script src="model.js"></script>
 <script src="app.js"></script>
-<script src="subject-switch.js"></script>
 </body>
 </html>
