@@ -187,8 +187,8 @@ function main() {
   console.log("警告:", warnings.length ? warnings : "无");
   if (!questions.length) console.log("⚠ 题目区解析为 0：多半是源 docx 版式与骨架解析不符，请改 build_data.js 的 parse() 段");
   const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters, questions };
-  const { outJs, outJson } = writeArtifacts(path.join(HERE, ".."), payload);
-  console.log("已生成:", outJs, outJson);
+  const { outJson } = writeArtifacts(path.join(HERE, ".."), payload);
+  console.log("已生成:", outJson);
 }
 
 main();

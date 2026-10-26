@@ -238,8 +238,8 @@ function main() {
   console.log("题目:", questions.length, cnt);
   console.log("剔除:", warnings.length ? warnings.join("；") : "无");
   const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters: [CHAPTER], questions };
-  const { outJs, outJson } = writeArtifacts(path.join(HERE, ".."), payload);
-  console.log("已生成:", outJs, outJson);
+  const { outJson } = writeArtifacts(path.join(HERE, ".."), payload);
+  console.log("已生成:", outJson);
 }
 
 main();

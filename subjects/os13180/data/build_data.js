@@ -181,8 +181,8 @@ function main() {
   console.log("警告:", warnings.length ? warnings : "无");
   const payload = { title: SUBJECT.pageTitle, meta: metaOf(SUBJECT), chapters, questions };
   if (memoRes) payload.memo = memoRes.memo;
-  const { outJs, outJson } = writeArtifacts(path.join(HERE, ".."), payload);
-  console.log("已生成:", outJs, outJson);
+  const { outJson } = writeArtifacts(path.join(HERE, ".."), payload);
+  console.log("已生成:", outJson);
 }
 
 main();

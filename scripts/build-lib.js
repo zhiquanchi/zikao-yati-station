@@ -130,11 +130,10 @@ export function applyExplains(questions, expl, warnings, opts) {
   }
 }
 
-// 产物落盘：科目根 data.js（有意提交进 git，供 file:// 与部署直接引用）+ data/questions.json（测试用）
+// 产物落盘：只生成 data/questions.json（服务端装载的唯一题库事实源）。
+// 前端不再需要 data.js——题库由 API 下发。
 export function writeArtifacts(subjectDir, payload) {
-  const outJs = path.join(subjectDir, "data.js");
   const outJson = path.join(subjectDir, "data", "questions.json");
   writeFileSync(outJson, JSON.stringify(payload, null, 1), "utf8");
-  writeFileSync(outJs, "// 由 data/build_data.js 自动生成，请勿手改\nwindow.QUIZ_DATA = " + JSON.stringify(payload) + ";\n", "utf8");
-  return { outJs, outJson };
+  return { outJson };
 }

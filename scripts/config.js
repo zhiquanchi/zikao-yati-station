@@ -32,7 +32,7 @@ export function findSubject(arg) {
   return hit;
 }
 
-// 前端注入 QUIZ_DATA.meta 的字段集（科目身份的浏览器侧镜像）
+// 构建期把科目身份写进 questions.json 的 meta（Go 运行时以 subject.json 为准；此处仅保留题库自描述）
 export function metaOf(s) {
   return {
     prefix: s.prefix, code: s.code, name: s.name, examMonth: s.examMonth,

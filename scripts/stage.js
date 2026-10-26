@@ -1,31 +1,19 @@
-// 前端产物暂存：bun run stage [科目…]（缺省＝全部）。
-// 把共享引擎 frontend/ 与科目产物合成为 build/stage/<prefix>/ —— 部署目录的唯一事实源是共享引擎，
-// 这里只是按门户静态根的形态拼一次（deploy.sh 与本地 file:// 预览都吃这份暂存）。
+// 前端产物暂存：bun run stage（＝build:web）。
+// 只复制一份共享前端到 build/web/；不再按科目复制引擎，也不再读 data.js。
 import path from "node:path";
 import { mkdirSync, rmSync, cpSync, existsSync, chmodSync, readdirSync } from "node:fs";
-import { loadSubjects, findSubject, WEB_DIR, ROOT } from "./config.js";
+import { WEB_DIR, ROOT } from "./config.js";
 
-const ENGINE_FILES = ["index.html", "styles.css", "app.js", "grading.js", "sync.js", "identity.js", "auth.js", "recite.js", "memo.js", "subject-switch.js", "subjects.js"];
-const SUBJECT_FILES = ["data.js", "mindmap.html"];
+const FILES = ["index.html", "styles.css", "api.js", "model.js", "app.js", "config.json"];
+const dest = path.join(ROOT, "build", "web");
 
-const ROOT_ = path.join(ROOT, "build", "stage");
-const names = process.argv.slice(2);
-const subs = names.length ? names.map((n) => findSubject(n)) : loadSubjects();
-
-if (!existsSync(path.join(WEB_DIR, "subjects.js"))) throw new Error("缺 frontend/subjects.js，请先 bun run build");
-
-for (const s of subs) {
-  const dest = path.join(ROOT_, s.prefix);
-  rmSync(dest, { recursive: true, force: true });
-  mkdirSync(dest, { recursive: true });
-  for (const f of ENGINE_FILES) cpSync(path.join(WEB_DIR, f), path.join(dest, f));
-  for (const f of SUBJECT_FILES) {
-    const src = path.join(s.dir, f);
-    if (existsSync(src)) cpSync(src, path.join(dest, f));
-  }
-  if (!existsSync(path.join(dest, "data.js"))) throw new Error(`${s.slug} 缺 data.js，请先 bun run build ${s.slug}`);
-  // 统一读权限：编辑器/写文件工具新建的文件可能带 600，进容器后 bun 以非 root 运行会 EACCES（线上静态 500）
-  chmodSync(dest, 0o755);
-  for (const ent of readdirSync(dest)) chmodSync(path.join(dest, ent), 0o644);
-  console.log(`已暂存 build/stage/${s.prefix}/（${s.pageTitle}）`);
+rmSync(dest, { recursive: true, force: true });
+mkdirSync(dest, { recursive: true });
+for (const f of FILES) {
+  const src = path.join(WEB_DIR, f);
+  if (!existsSync(src)) throw new Error(`缺 frontend/${f}`);
+  cpSync(src, path.join(dest, f));
 }
+chmodSync(dest, 0o755);
+for (const ent of readdirSync(dest)) chmodSync(path.join(dest, ent), 0o644);
+console.log(`已暂存 build/web/（${FILES.length} 个文件，全部科目共用）`);
