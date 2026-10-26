@@ -1,0 +1,19 @@
+# 单 API 服务镜像：判分 / 逐项解析 / 账号 / 进度 / 组卷 / 统计。
+# 科目与题库不打进镜像：运行时挂载 ./subjects 到 SUBJECTS_DIR。
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY backend/grade-svc/go.mod backend/grade-svc/go.sum ./
+RUN go mod download
+COPY backend/grade-svc/ ./
+RUN CGO_ENABLED=0 go build -trimpath -o /out/apivc ./cmd/apivc
+
+FROM alpine:3.20
+RUN adduser -D -u 10001 app
+COPY --from=build /out/apivc /usr/local/bin/apivc
+USER app
+WORKDIR /app
+ENV API_HOST=0.0.0.0 \
+    API_PORT=8793 \
+    SUBJECTS_DIR=/app/subjects
+EXPOSE 8793
+ENTRYPOINT ["apivc"]
