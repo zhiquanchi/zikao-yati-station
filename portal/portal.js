@@ -19,6 +19,49 @@ const rePrefix = new RegExp("^/(" + prefixes.join("|") + ")(?:/(.*))?$");
 
 const redir = (loc) => new Response(null, { status: 302, headers: { location: loc } });
 
+// 请求头透传：Cookie 是登录态的唯一载体；x-forwarded-* 让 sync-svc 识别真实客户端与原始 Host。
+// 只搬运，不解释 token——认证判断全在 Go 端。
+function forwardHeaders(req, prefix) {
+  const h = new Headers();
+  h.set("content-type", req.headers.get("content-type") || "application/json");
+  const cookie = req.headers.get("cookie");
+  if (cookie) h.set("cookie", cookie);
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) h.set("x-forwarded-for", xff);
+  const xrh = req.headers.get("x-real-ip");
+  if (xrh) h.set("x-real-ip", xrh);
+  h.set("x-forwarded-host", req.headers.get("x-forwarded-host") || new URL(req.url).host);
+  // 邮件链接需要原始前缀与协议；上游已带则原样保留
+  h.set("x-forwarded-prefix", req.headers.get("x-forwarded-prefix") || (prefix ? "/" + prefix + "/" : "/"));
+  const proto = req.headers.get("x-forwarded-proto");
+  if (proto) h.set("x-forwarded-proto", proto);
+  else if (req.url.startsWith("https:")) h.set("x-forwarded-proto", "https");
+  return h;
+}
+
+// 响应头透传：Set-Cookie 必须逐条保留，否则浏览器收不到登录态。
+function relayHeaders(up, extra = {}) {
+  const h = new Headers(extra);
+  const ct = up.headers.get("content-type");
+  if (ct) h.set("content-type", ct);
+  const cookies = typeof up.headers.getSetCookie === "function" ? up.headers.getSetCookie() : [];
+  for (const c of cookies) h.append("set-cookie", c);
+  if (!cookies.length) {
+    const sc = up.headers.get("set-cookie");
+    if (sc) h.append("set-cookie", sc);
+  }
+  return h;
+}
+
+const upstreamError = (e) => {
+  const timedOut = !!e && (e.name === "TimeoutError" || e.name === "AbortError");
+  return new Response(JSON.stringify(timedOut
+    ? { error: "timeout", detail: "上游服务超时，请重试" }
+    : { error: "svc_down", detail: String((e && e.message) || e) }), {
+    status: timedOut ? 504 : 502, headers: { "content-type": "application/json" },
+  });
+};
+
 const server = Bun.serve({
   hostname: process.env.HOST || "0.0.0.0",
   port: Number(process.env.PORT || 80),
@@ -41,7 +84,7 @@ const server = Bun.serve({
       try {
         const up_ = await fetch(GRADE[subject], {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: forwardHeaders(req, subject),
           body: await req.text(),
           signal: AbortSignal.timeout(95000),
         });
@@ -65,6 +108,22 @@ const server = Bun.serve({
       }
     }
 
+    // 认证代理：/<科目>/api/auth/* → sync-svc /auth/*（Cookie 与 Set-Cookie 必须原样透传）。
+    if (rest === "api/auth" || rest.startsWith("api/auth/")) {
+      const tail = rest.slice("api/auth".length);
+      try {
+        const upA = await fetch(SYNC_UP + "/auth" + tail, {
+          method: req.method,
+          headers: forwardHeaders(req, subject),
+          body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
+          signal: AbortSignal.timeout(15000),
+        });
+        return new Response(await upA.text(), { status: upA.status, headers: relayHeaders(upA) });
+      } catch (e) {
+        return upstreamError(e);
+      }
+    }
+
     // 作答进度云同步代理：转发到 Go 云同步服务（sync-svc）——槽位=(科目,用户)，带码即私有槽，
     // 不带码走旧版兼容全局槽；合并/校验/落库业务逻辑全在 Go 端，门户仅搬运（超时 30s 富余覆盖慢网络 PUT）。
     if (rest === "api/store" || rest.startsWith("api/store/")) {
@@ -72,18 +131,13 @@ const server = Bun.serve({
       try {
         const up2 = await fetch(SYNC_UP + "/store/" + subject + tail, {
           method: req.method,
-          headers: { "content-type": "application/json" },
+          headers: forwardHeaders(req, subject),
           body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
           signal: AbortSignal.timeout(30000),
         });
-        return new Response(await up2.text(), {
-          status: up2.status,
-          headers: { "content-type": up2.headers.get("content-type") || "application/json" },
-        });
+        return new Response(await up2.text(), { status: up2.status, headers: relayHeaders(up2) });
       } catch (e) {
-        return new Response(JSON.stringify({ error: "svc_down", detail: String((e && e.message) || e) }), {
-          status: 502, headers: { "content-type": "application/json" },
-        });
+        return upstreamError(e);
       }
     }
 

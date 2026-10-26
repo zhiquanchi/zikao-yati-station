@@ -7,7 +7,8 @@ const ROOT = import.meta.dir;
 const PORT = 8925;
 const FAKE_LIVE = 8926; // 在线的假判分上游
 const DEAD_BASE = 8927; // 离线科目上游端口段
-let portal, fakeLive;
+const FAKE_SYNC = 8935; // 在线的假云同步/认证上游（避开 DEAD_BASE 段）
+let portal, fakeLive, fakeSync;
 
 // 清单驱动
 const manifest = await Bun.file(path.join(ROOT, "..", "subjects.json")).json();
@@ -50,7 +51,19 @@ beforeAll(async () => {
       return Response.json({ engine: "ai", subject: "live", score: 88, per: [] });
     },
   });
-  const env = { ...process.env, PORT: String(PORT) };
+  fakeSync = Bun.serve({
+    hostname: "127.0.0.1", port: FAKE_SYNC,
+    async fetch(req) {
+      return new Response(JSON.stringify({
+        path: new URL(req.url).pathname,
+        gotCookie: req.headers.get("cookie") || "",
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json", "set-cookie": "exam_session=server; Path=/; HttpOnly; SameSite=Lax" },
+      });
+    },
+  });
+  const env = { ...process.env, PORT: String(PORT), SYNC_API: `http://127.0.0.1:${FAKE_SYNC}` };
   prefixes.forEach((pre, i) => {
     env[up(pre) + "_ROOT"] = fixture(pre, pre.toUpperCase() + "-SITE");
     // 第一个科目接活上游，其余接死端口（验证按科目独立分流与 502 降级）
@@ -61,7 +74,7 @@ beforeAll(async () => {
   await waitUp(`http://127.0.0.1:${PORT}/`);
 });
 
-afterAll(() => { portal?.kill(); fakeLive?.stop(); });
+afterAll(() => { portal?.kill(); fakeLive?.stop(); fakeSync?.stop(); });
 
 describe("门户路由", () => {
   it("裸根落主科目；各科目裸前缀补斜杠", async () => {
@@ -106,6 +119,27 @@ describe("门户路由", () => {
     expect(text).toContain("event: delta");
     expect(text).toContain("event: done");
     expect(text).toContain("并发");
+  });
+  it("认证代理：/<前缀>/api/auth/* 透传 Cookie 并回传 Set-Cookie", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/${prefixes[0]}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "exam_session=abc" },
+      body: "{}",
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.getSetCookie().join(";")).toContain("exam_session=server");
+    const j = await r.json();
+    expect(j.path).toBe("/auth/login");
+    expect(j.gotCookie).toBe("exam_session=abc");
+  });
+  it("云同步代理：Cookie 透传到 sync-svc", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/${prefixes[0]}/api/store`, {
+      headers: { cookie: "exam_session=abc" },
+    });
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.path).toBe(`/store/${prefixes[0]}`);
+    expect(j.gotCookie).toBe("exam_session=abc");
   });
   it("目录穿越被拒（编码与点段都拦下，绝不逃逸科目根）", async () => {
     for (const pre of prefixes) {

@@ -4,16 +4,26 @@
   "use strict";
   const D = window.QUIZ_DATA, G = window.GRADER;
   const ID = window.IDENTITY;
+  const AUTH = window.AUTH;
   const isHttp = typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:");
-  ID.ensure(D.meta.storageKey, isHttp); // 新访客静默签发同步码；有旧版数据的设备继续兼容槽（站长零打断）
-  const KEY = ID.keyFor(D.meta.storageKey); // 存储键＝科目裸键+同步码分区；云端槽=(科目,码)，各人进度独立
+  // 先探测登录态（3s 超时，失败按未登录）：登录后账号 slot 优先，未登录退回匿名码（仅本机）。
+  let me = null;
+  if (isHttp && AUTH) me = await AUTH.me();
+  if (me && !ID.setAccount(me)) me = null;
+  // 只有服务端明确 401（会话失效）才清账号；网络失败保留本机账号分区，离线可继续读写，登录后自动补同步。
+  if (!me && AUTH && AUTH.lastStatus && AUTH.lastStatus() === 401) ID.clearAccount();
+  ID.ensure(D.meta.storageKey, isHttp);
+  const KEY = ID.keyFor(D.meta.storageKey); // 存储键＝科目裸键+账号 slot/匿名码；未登录不上云
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const TYPE_CN = { single: "单选", blank: "填空", essay: "简答" };
   const RECITE = window.RECITE; // 重点优先背的纯排序模块（web/recite.js；科目 flags.recite 开启时才启用）
 
-  // 云同步首拉合并：await 之后才装载 store/shuf（file:// 或超时自动降级纯本机，绝不阻塞渲染）
-  if (window.SYNC) await window.SYNC.prefetch(KEY, ID.user());
+  // 云同步首拉合并：仅登录后发起；await 之后才装载 store/shuf（file:// 或超时自动降级纯本机）
+  if (window.SYNC) {
+    if (me) await window.SYNC.prefetch(KEY, ID.user());
+    else window.SYNC.disable();
+  }
 
   let store = load();
   let filters = { chapter: "all", type: "all", status: "all", search: "" };
@@ -1024,7 +1034,7 @@
 
   // ——— 简答 AI 判分：经同源 /api/grade 调 Go 服务（grade-svc），不可用自动降级本机估分 ———
   let aiOff = false; // 会话级熔断：服务未启动 / 未配 Key / Key 无效时不再重复请求
-  const AI_CODES = { no_key: "未配置 QWEN_API_KEY", bad_key: "API Key 无效", svc_down: "判分服务未启动", timeout: "上游超时", parse: "上游输出解析失败", upstream: "上游服务错误", bad_request: "请求参数异常", internal: "服务内部错误", network: "网络中断，请检查网络后重试", incomplete: "连接中断，解析未完成，请重试" };
+  const AI_CODES = { no_key: "未配置 QWEN_API_KEY", bad_key: "API Key 无效", svc_down: "判分服务未启动", timeout: "上游超时", parse: "上游输出解析失败", upstream: "上游服务错误", bad_request: "请求参数异常", internal: "服务内部错误", network: "网络中断，请检查网络后重试", incomplete: "连接中断，解析未完成，请重试", unauthorized: "请先登录后使用 AI 判分", auth_unavailable: "登录状态校验失败，请稍后重试", too_many_requests: "本小时判分次数已达上限，请稍后再试" };
   function aiEnabled() { return !aiOff && location.protocol !== "file:"; }
   function liveCard(qid) { return document.querySelector(`.card[data-id="${qid}"]`); }
   function essayAnswerText(input) {
@@ -1562,45 +1572,202 @@
   bindToolbar();
   bindRecite(); // 科目 flags.recite 开启时才注入顶栏入口（未开启自动移除）
   bindMemo();   // 科目 meta.memo 开启时才注入「考前重点记忆」入口（未开启自动移除）
-  // ——— 多用户身份：点顶栏云同步芯片开弹层（看码/复制/输码切换/一键迁移）———
-  (function identityUI() {
+  // ——— 账号：点顶栏云同步芯片开弹层（登录/注册/找回密码/退出/清除本机数据）———
+  (function accountUI() {
     const chip = $("#syncChip"), dlg = $("#idDialog");
-    if (!chip || !dlg || !isHttp) return; // file:// 无云同步亦无芯片文案：身份功能不启用
+    if (!chip || !dlg || !isHttp) return; // file:// 无认证亦无芯片：账号功能不启用
     const q = (s) => dlg.querySelector(s);
     const raw = D.meta.storageKey;
-    const hasLegacyLocal = () => { try { return localStorage.getItem(raw) != null; } catch (e) { return false; } };
+    const params = new URLSearchParams(location.search);
+    let resetToken = params.get("reset_token") || "";
+    let mode = resetToken ? "new" : "login"; // login | register | reset | new
+    const logged = () => !!(ID.account && ID.account());
+    const verified = () => !!(AUTH && AUTH.current() && AUTH.current().email_verified);
+    const showError = (sel, msg) => { const el = q(sel); el.textContent = msg || ""; el.hidden = !msg; };
+    const setError = (msg) => showError("#idError", msg);
+    const setResetError = (msg) => showError("#idResetError", msg);
+    const setNewError = (msg) => showError("#idNewError", msg);
+    const clearErrors = () => { setError(""); setResetError(""); setNewError(""); };
+
     function render() {
-      const u = ID.user(), legacy = hasLegacyLocal();
-      q("#idDesc").innerHTML = u
-        ? "本机按同步码分槽上云，各人进度互不干扰；全部科目共用这一个码。"
-        : "本机还在用旧版全局槽——" + (legacy ? "同科目旧版设备<b>共用同一份进度</b>，建议换成你自己的同步码。" : "尚无本机的私有进度。");
-      const codeRow = q("#idCodeRow");
-      codeRow.hidden = !u;
-      if (u) codeRow.innerHTML = "我的同步码 <b>" + u + "</b>";
-      q("#idMigrate").hidden = !!u || !legacy;
-      q("#idCopy").hidden = !u;
-      q("#idBack").hidden = !ID.wasLegacy(); // 迁移过来的身份可退回旧版槽（新访客无此路）
-      q("#idInput").value = "";
+      const isLogged = logged();
+      q("#idLoggedOut").hidden = isLogged;
+      q("#idLoggedIn").hidden = !isLogged;
+      q("#idTabs").hidden = mode === "reset" || mode === "new";
+      q("#idForm").hidden = mode !== "login" && mode !== "register";
+      q("#idResetForm").hidden = mode !== "reset";
+      q("#idNewForm").hidden = mode !== "new";
+      q("#idForgotRow").hidden = mode !== "login";
+      q("#idResendRow").hidden = mode !== "login";
+      q("#idConfirmRow").hidden = mode !== "register";
+      q("#idPassword").autocomplete = mode === "register" ? "new-password" : "current-password";
+      q("#idSubmit").textContent = mode === "register" ? "注册并登录" : "登录";
+      q("#idTitle").textContent = isLogged ? "我的账号"
+        : mode === "register" ? "注册账号"
+          : mode === "reset" ? "找回密码"
+            : mode === "new" ? "设置新密码"
+              : "登录";
+      q("#idDesc").textContent = isLogged
+        ? "进度已绑定到账号；换设备用同一邮箱登录即可续用。"
+        : mode === "reset" ? "输入注册邮箱，我们会发送重置链接（30 分钟内有效）。"
+          : mode === "new" ? "设置新密码后，所有旧登录会立即失效。"
+            : "登录后可云同步进度、使用 AI 判分；匿名也能浏览题库与本地判分。";
+      if (isLogged) {
+        q("#idWho").textContent = "已登录：" + (ID.accountEmail() || ID.account());
+        q("#idVerifyRow").hidden = verified();
+      }
+      clearErrors();
     }
-    async function switchTo(code, migrate) {
-      code = String(code || "").trim().toLowerCase();
-      if (!migrate && !ID.valid(code)) { toast("同步码应为 4~10 位小写字母数字（不含 i、l、o、0、1）"); return; }
-      if (window.SYNC) await SYNC.flushNow(); // 最后一笔防抖改动推完再换身份
-      if (migrate) ID.migrateTo(raw, code); else ID.setCode(code);
+
+    async function onSubmit(e) {
+      e.preventDefault();
+      if (!AUTH) return;
+      const email = q("#idEmail").value.trim();
+      const password = q("#idPassword").value;
+      if (mode === "register" && password !== q("#idConfirm").value) {
+        setError("两次输入的密码不一致");
+        return;
+      }
+      q("#idSubmit").disabled = true;
+      setError("");
+      q("#idResendRow").hidden = true;
+      try {
+        const data = mode === "register" ? await AUTH.register(email, password) : await AUTH.login(email, password);
+        const u = data && data.user;
+        if (!u || !ID.setAccount(u)) throw new Error("登录响应异常");
+        // 首登：把本机匿名码分区 / 旧版裸键分区的用户数据搬进账号分区；刷新后启动流程按账号重新取 KEY
+        if (ID.adoptLocal) ID.adoptLocal(raw);
+        ID.clearCode();
+        location.reload();
+      } catch (err) {
+        setError(err && err.message ? err.message : "操作失败，请稍后重试");
+        if (err && err.code === "email_not_verified") q("#idResendRow").hidden = false;
+      } finally {
+        q("#idSubmit").disabled = false;
+      }
+    }
+
+    async function onReset(e) {
+      e.preventDefault();
+      if (!AUTH) return;
+      const email = q("#idResetEmail").value.trim();
+      q("#idResetSubmit").disabled = true;
+      setResetError("");
+      try {
+        await AUTH.requestReset(email);
+        setResetError("如果该邮箱已注册，重置邮件已发送，请查收（30 分钟内有效）。");
+      } catch (err) {
+        setResetError(err && err.message ? err.message : "操作失败，请稍后重试");
+      } finally {
+        q("#idResetSubmit").disabled = false;
+      }
+    }
+
+    async function onNewPassword(e) {
+      e.preventDefault();
+      if (!AUTH) return;
+      const password = q("#idNewPassword").value;
+      if (password !== q("#idNewPassword2").value) {
+        setNewError("两次输入的密码不一致");
+        return;
+      }
+      q("#idNewSubmit").disabled = true;
+      setNewError("");
+      try {
+        await AUTH.resetPassword(resetToken, password);
+        resetToken = "";
+        mode = "login";
+        history.replaceState({}, "", location.pathname);
+        toast("密码已重置，请用新密码登录");
+        render();
+      } catch (err) {
+        setNewError(err && err.message ? err.message : "操作失败，请稍后重试");
+      } finally {
+        q("#idNewSubmit").disabled = false;
+      }
+    }
+
+    async function doLogout(clearLocal) {
+      if (clearLocal && !confirm("退出并删除本机该账号的进度缓存？云端进度不受影响，下次登录会重新拉回。")) return;
+      if (window.SYNC) { try { await SYNC.flushNow(); } catch (e) {} }
+      if (AUTH) await AUTH.logout();
+      ID.clearAccount();
+      if (clearLocal && ID.clearPartition) ID.clearPartition(raw);
+      if (window.SYNC) SYNC.disable();
       location.reload();
     }
+
+    async function resendVerify(email, onMessage) {
+      try {
+        await AUTH.resendVerify(email);
+        onMessage("如果该邮箱未验证，验证邮件已发送，请查收。");
+      } catch (err) {
+        onMessage(err && err.message ? err.message : "发送失败，请稍后重试");
+      }
+    }
+
     chip.classList.add("id-clickable");
-    chip.title = "云同步身份（多用户）";
+    chip.title = "账号与云同步";
     chip.addEventListener("click", () => { render(); dlg.showModal(); });
     q("#idClose").addEventListener("click", () => dlg.close());
-    q("#idMigrate").addEventListener("click", () => switchTo(ID.mint(), true));
-    q("#idApply").addEventListener("click", () => switchTo(q("#idInput").value, false));
-    q("#idBack").addEventListener("click", async () => { if (window.SYNC) await SYNC.flushNow(); ID.clearCode(); location.reload(); });
-    q("#idCopy").addEventListener("click", () => {
-      const c = ID.user(); if (!c) return;
-      const fb = () => toast("你的同步码：" + c);
-      try { navigator.clipboard.writeText(c).then(() => toast("同步码已复制"), fb); } catch (e) { fb(); }
+    q("#idClose2").addEventListener("click", () => dlg.close());
+    q("#idResetBack").addEventListener("click", () => { mode = "login"; render(); });
+    q("#idNewCancel").addEventListener("click", () => {
+      resetToken = "";
+      mode = "login";
+      history.replaceState({}, "", location.pathname);
+      render();
     });
+    q("#idForgot").addEventListener("click", (e) => {
+      e.preventDefault();
+      q("#idResetEmail").value = q("#idEmail").value;
+      mode = "reset";
+      render();
+    });
+    dlg.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+      mode = b.dataset.tab;
+      dlg.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("active", x === b));
+      render();
+    }));
+    q("#idForm").addEventListener("submit", onSubmit);
+    q("#idResetForm").addEventListener("submit", onReset);
+    q("#idNewForm").addEventListener("submit", onNewPassword);
+    q("#idResendLogin").addEventListener("click", (e) => {
+      e.preventDefault();
+      resendVerify(q("#idEmail").value.trim(), setError);
+    });
+    q("#idResendVerify").addEventListener("click", (e) => {
+      e.preventDefault();
+      resendVerify(ID.accountEmail(), (msg) => toast(msg));
+    });
+    q("#idLogout").addEventListener("click", () => doLogout(false));
+    q("#idLogoutClear").addEventListener("click", () => doLogout(true));
+
+    // 邮件链接：?verify_token=... 自动验证；?reset_token=... 直接打开设置新密码
+    const verifyToken = params.get("verify_token");
+    if (verifyToken && AUTH) {
+      AUTH.verifyEmail(verifyToken)
+        .then(() => {
+          const u = new URL(location.href);
+          u.searchParams.delete("verify_token");
+          history.replaceState({}, "", u.pathname + u.search);
+          toast("邮箱验证成功");
+          return AUTH.me();
+        })
+        .then(() => { if (logged()) location.reload(); })
+        .catch((err) => toast("邮箱验证失败：" + (err && err.message ? err.message : "链接可能已过期")));
+    }
+    if (resetToken) { render(); dlg.showModal(); }
+
+    if (window.SYNC) {
+      SYNC.onAuthLost = () => {
+        ID.clearAccount();
+        if (AUTH) AUTH.expire();
+        chip.textContent = "🔒 登录已过期 · 点此登录";
+        toast("登录已过期，请重新登录");
+      };
+    }
+    if (!logged() && !chip.textContent) chip.textContent = "🔑 登录";
   })();
   renderStats();
   renderChapters();

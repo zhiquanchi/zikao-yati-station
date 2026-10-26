@@ -13,9 +13,11 @@ try { subject = findSubject(process.argv[2]); } catch (e) {
   console.error(e.message + "\n用法：bun server.js <科目>（bun run start os13180）");
   process.exit(1);
 }
-const ONLINE = "http://121.40.43.229/" + subject.prefix;
+const ONLINE_ORIGIN = (process.env.ONLINE_ORIGIN || "http://121.40.43.229").replace(/\/+$/, "");
+const ONLINE = ONLINE_ORIGIN + "/" + subject.prefix;
 const GRADE_API = process.env.GRADE_API || ONLINE + "/api/grade";
 const STORE_API = process.env.STORE_API || ONLINE + "/api/store";
+const AUTH_API = process.env.AUTH_API || ONLINE + "/api/auth";
 const port = Number(process.env.PORT || (subject.ports && subject.ports.web) || 8791);
 
 async function proxy(req, target, timeoutMs, allowMethods) {
@@ -28,21 +30,39 @@ async function proxy(req, target, timeoutMs, allowMethods) {
     return new Response(JSON.stringify({ error: "method_not_allowed" }), { status: 405, headers: { "content-type": "application/json" } });
   }
   try {
+    // Cookie 是登录态的唯一载体；x-forwarded-host 让线上门户还原浏览器原始 Host（同源校验用）
+    const headers = new Headers();
+    headers.set("content-type", req.headers.get("content-type") || "application/json");
+    const cookie = req.headers.get("cookie");
+    if (cookie) headers.set("cookie", cookie);
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) headers.set("x-forwarded-for", xff);
+    headers.set("x-forwarded-host", req.headers.get("x-forwarded-host") || new URL(req.url).host);
+    headers.set("x-forwarded-prefix", req.headers.get("x-forwarded-prefix") || "/" + subject.prefix + "/");
+    const proto = req.headers.get("x-forwarded-proto");
+    if (proto) headers.set("x-forwarded-proto", proto);
+    else if (req.url.startsWith("https:")) headers.set("x-forwarded-proto", "https");
     const up = await fetch(target, {
       method: req.method,
-      headers: { "content-type": "application/json" },
+      headers,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.text(),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const ct = up.headers.get("content-type") || "application/json";
+    const respHeaders = new Headers({ "content-type": ct });
+    const cookies = typeof up.headers.getSetCookie === "function" ? up.headers.getSetCookie() : [];
+    for (const c of cookies) respHeaders.append("set-cookie", c);
+    if (!cookies.length) {
+      const sc = up.headers.get("set-cookie");
+      if (sc) respHeaders.append("set-cookie", sc);
+    }
     if (ct.includes("text/event-stream")) {
       // 逐项解析流式应答：body 直接转发不聚合（X-Accel-Buffering 一并透传，供链路上 nginx 关缓冲）
-      return new Response(up.body, {
-        status: up.status,
-        headers: { "content-type": ct, "cache-control": "no-cache", "x-accel-buffering": "no" },
-      });
+      respHeaders.set("cache-control", "no-cache");
+      respHeaders.set("x-accel-buffering", "no");
+      return new Response(up.body, { status: up.status, headers: respHeaders });
     }
-    return new Response(await up.text(), { status: up.status, headers: { "content-type": ct } });
+    return new Response(await up.text(), { status: up.status, headers: respHeaders });
   } catch (e) {
     // 超时与「服务不可达」区分开：超时返回 504 timeout（前端提示可重试，不熔断整会话 AI）；
     // 其余连接类失败仍 502 svc_down（和旧口径一致）。
@@ -62,6 +82,10 @@ const server = Bun.serve({
     const url = new URL(req.url);
     let p = decodeURIComponent(url.pathname);
     if (p === "/api/grade" && req.method === "POST") return proxy(req, GRADE_API, 95000);
+    if (p === "/api/auth" || p.startsWith("/api/auth/")) {
+      const tail = p.slice("/api/auth".length); // "" 或 "/login" 等
+      return proxy(req, AUTH_API + tail, 15000, ["GET", "POST"]);
+    }
     if (p === "/api/store" || p.startsWith("/api/store/")) {
       const tail = p.slice("/api/store".length); // "" 或 "/<同步码>"
       return proxy(req, STORE_API === "off" ? "off" : STORE_API + tail, 15000, ["GET", "PUT"]);

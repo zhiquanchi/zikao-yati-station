@@ -23,10 +23,14 @@ async function waitUp(url, tries = 60) {
   }
   throw new Error("服务启动超时: " + url);
 }
-function spawnSite(subject, port, gradeApi, storeApi) {
+function spawnSite(subject, port, gradeApi, storeApi, authApi) {
   return Bun.spawn(["bun", "server.js", subject], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), GRADE_API: gradeApi, ...(storeApi ? { STORE_API: storeApi } : {}) },
+    env: {
+      ...process.env, PORT: String(port), GRADE_API: gradeApi,
+      ...(storeApi ? { STORE_API: storeApi } : {}),
+      ...(authApi ? { AUTH_API: authApi } : {}),
+    },
     stdout: "ignore",
     stderr: "ignore",
   });
@@ -61,7 +65,21 @@ beforeAll(async () => {
     port: FAKE_STORE,
     async fetch(req) {
       const path = new URL(req.url).pathname;
-      if (req.method === "GET") return Response.json({ path, blob: { store: { 1: { u: "C", s: 100, ts: 11 } }, shuf: null, clearedAt: 0, updatedAt: 11 } });
+      // 认证上游：回显收到的 Cookie / 转发 Host，并回传 Set-Cookie
+      if (path.startsWith("/api/auth")) {
+        return new Response(JSON.stringify({
+          path,
+          gotCookie: req.headers.get("cookie") || "",
+          xForwardedHost: req.headers.get("x-forwarded-host") || "",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "set-cookie": "exam_session=server; Path=/; HttpOnly; SameSite=Lax",
+          },
+        });
+      }
+      if (req.method === "GET") return Response.json({ path, gotCookie: req.headers.get("cookie") || "", blob: { store: { 1: { u: "C", s: 100, ts: 11 } }, shuf: null, clearedAt: 0, updatedAt: 11 } });
       if (req.method === "PUT") {
         const b = await req.json().catch(() => null);
         if (!b || !b.store) return Response.json({ error: "bad_payload" }, { status: 400 });
@@ -70,7 +88,7 @@ beforeAll(async () => {
       return new Response("405", { status: 405 });
     },
   });
-  serverProc = spawnSite("os13180", PORT, `http://127.0.0.1:${FAKE_PORT}/api/grade`, `http://127.0.0.1:${FAKE_STORE}/api/store`);
+  serverProc = spawnSite("os13180", PORT, `http://127.0.0.1:${FAKE_PORT}/api/grade`, `http://127.0.0.1:${FAKE_STORE}/api/store`, `http://127.0.0.1:${FAKE_STORE}/api/auth`);
   await waitUp(`http://127.0.0.1:${PORT}/index.html`);
 });
 
@@ -124,6 +142,26 @@ describe("/api/grade 代理", () => {
     } finally {
       deadProc.kill();
     }
+  });
+});
+
+describe("/api/auth 代理与 Cookie 透传", () => {
+  it("POST /api/auth/login 透传 Cookie、回传 Set-Cookie", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "exam_session=abc" },
+      body: "{}",
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.getSetCookie().join(";")).toContain("exam_session=server");
+    const j = await r.json();
+    expect(j.path).toBe("/api/auth/login");
+    expect(j.gotCookie).toBe("exam_session=abc");
+    expect(j.xForwardedHost).toContain("127.0.0.1");
+  });
+  it("GET /api/store 把 Cookie 透传给上游", async () => {
+    const r = await fetch(`http://127.0.0.1:${PORT}/api/store`, { headers: { cookie: "exam_session=abc" } });
+    expect((await r.json()).gotCookie).toBe("exam_session=abc");
   });
 });
 
@@ -215,7 +253,7 @@ for (const s of loadSubjects()) {
       const djs = await (await fetch(`http://127.0.0.1:${port}/data.js`)).text();
       expect(djs).toContain(`"storageKey":"${s.storageKey}"`); // 科目目录产物优先
       expect(djs).toContain(`"prefix":"${s.prefix}"`);
-      for (const f of ["app.js", "grading.js", "sync.js", "identity.js", "recite.js", "memo.js", "subject-switch.js", "styles.css", "subjects.js"]) {
+      for (const f of ["app.js", "grading.js", "sync.js", "identity.js", "auth.js", "recite.js", "memo.js", "subject-switch.js", "styles.css", "subjects.js"]) {
         expect((await fetch(`http://127.0.0.1:${port}/${f}`)).status).toBe(200); // web/ 共享引擎兜底
       }
       if (s.mindmap && s.mindmap.enabled) {

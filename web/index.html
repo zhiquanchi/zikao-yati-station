@@ -10,7 +10,7 @@
 <header class="topbar">
   <div class="wrap">
     <h1>押题练习</h1>
-    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，进度按同步码上云（多人共用站点各人独立）<span id="syncChip" class="sync-chip"></span></p>
+    <p class="sub"><span id="examWhen">自考</span> · 共 <span id="total"></span> 题 · 填空/简答自动判分，登录后进度按账号上云（匿名仅本机）<span id="syncChip" class="sync-chip"></span></p>
     <a class="mm-entry" id="mmEntry" href="mindmap.html" style="display:none"></a>
     <button class="mm-entry recite-entry" id="reciteEntry" type="button" style="display:none" title="按答题记录找出未掌握题，按薄弱程度逐题背">📌 重点优先背 <span class="recite-count" id="reciteCount">0</span></button>
     <button class="mm-entry memo-entry" id="memoEntry" type="button" style="display:none" title="只列考点、不显示题干的考前记忆清单">📚 考前重点记忆 <span class="memo-count" id="memoCount">0</span></button>
@@ -108,25 +108,70 @@
   </div>
 </dialog>
 
-  <div class="id-card">
-    <h3>云同步身份</h3>
-    <p class="id-desc" id="idDesc"></p>
-    <p class="id-code" id="idCodeRow" hidden></p>
-    <div class="id-btns">
-      <button type="button" id="idMigrate" class="chip" hidden>把这台的进度换成同步码</button>
-      <button type="button" id="idCopy" class="ghost" hidden>复制同步码</button>
-      <button type="button" id="idBack" class="ghost" hidden>退回旧版通用槽</button>
+  <dialog id="idDialog" aria-label="账号">
+    <div class="id-card">
+      <h3 id="idTitle">登录 / 注册</h3>
+      <p class="id-desc" id="idDesc"></p>
+
+      <div id="idLoggedOut">
+        <div class="id-tabs" id="idTabs">
+          <button type="button" class="chip active" data-tab="login">登录</button>
+          <button type="button" class="chip" data-tab="register">注册</button>
+        </div>
+
+        <form id="idForm">
+          <label class="id-field">邮箱<input id="idEmail" type="email" autocomplete="username" required></label>
+          <label class="id-field">密码<input id="idPassword" type="password" autocomplete="current-password" minlength="8" required></label>
+          <label class="id-field" id="idConfirmRow" hidden>确认密码<input id="idConfirm" type="password" autocomplete="new-password" minlength="8"></label>
+          <p class="id-tip" id="idForgotRow"><a href="#" id="idForgot">忘记密码？</a></p>
+          <p class="id-error" id="idError" hidden></p>
+          <p class="id-tip" id="idResendRow" hidden>邮箱尚未验证。<a href="#" id="idResendLogin">重新发送验证邮件</a></p>
+          <div class="id-btns">
+            <button type="submit" class="chip" id="idSubmit">登录</button>
+            <button type="button" class="ghost" id="idClose">关闭</button>
+          </div>
+        </form>
+
+        <form id="idResetForm" hidden>
+          <p class="id-tip">输入注册邮箱，我们会发送重置链接（30 分钟内有效）。</p>
+          <label class="id-field">邮箱<input id="idResetEmail" type="email" autocomplete="username" required></label>
+          <p class="id-error" id="idResetError" hidden></p>
+          <div class="id-btns">
+            <button type="submit" class="chip" id="idResetSubmit">发送重置邮件</button>
+            <button type="button" class="ghost" id="idResetBack">返回登录</button>
+          </div>
+        </form>
+
+        <form id="idNewForm" hidden>
+          <p class="id-tip">设置新密码（重置链接 30 分钟内有效；成功后所有旧登录失效）。</p>
+          <label class="id-field">新密码<input id="idNewPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+          <label class="id-field">确认新密码<input id="idNewPassword2" type="password" autocomplete="new-password" minlength="8" required></label>
+          <p class="id-error" id="idNewError" hidden></p>
+          <div class="id-btns">
+            <button type="submit" class="chip" id="idNewSubmit">重置密码</button>
+            <button type="button" class="ghost" id="idNewCancel">取消</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="idLoggedIn" hidden>
+        <p class="id-code" id="idWho"></p>
+        <p class="id-tip" id="idVerifyRow" hidden>邮箱未验证。<a href="#" id="idResendVerify">重新发送验证邮件</a></p>
+        <div class="id-btns">
+          <button type="button" class="ghost" id="idLogout">退出登录</button>
+          <button type="button" class="ghost" id="idLogoutClear">退出并清除本机数据</button>
+        </div>
+        <p class="id-tip">进度按账号上云；换手机或电脑用同一邮箱登录即可续用。</p>
+        <div class="id-btns"><button type="button" class="ghost" id="idClose2">关闭</button></div>
+      </div>
     </div>
-    <p class="id-input"><input id="idInput" maxlength="10" autocomplete="off" spellcheck="false" placeholder="输入已有同步码续用/切换用户"><button type="button" id="idApply" class="chip">切换</button></p>
-    <p class="id-tip">记住同步码：换手机或电脑输入同一个码即续用进度。输错别人的码＝用那人的进度。</p>
-    <div class="id-btns"><button type="button" id="idClose" class="ghost">关闭</button></div>
-  </div>
-</dialog>
+  </dialog>
 
 <script src="data.js"></script>
 <script src="grading.js"></script>
 <script src="sync.js"></script>
 <script src="identity.js"></script>
+<script src="auth.js"></script>
 <script src="recite.js"></script>
 <script src="memo.js"></script>
 <script src="subjects.js"></script>

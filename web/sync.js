@@ -109,7 +109,7 @@
     return target;
   }
 
-  const api = { mergeBlobs, payloadStore, payloadShuf, payloadExtras, applyInto, prefetch, schedule, markCleared, flushNow };
+  const api = { mergeBlobs, payloadStore, payloadShuf, payloadExtras, applyInto, prefetch, schedule, markCleared, flushNow, disable, onAuthLost: null };
   root.SYNC = api; // 浏览器挂 window、Bun 测试挂 globalThis
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
@@ -167,6 +167,12 @@
     let remote = null;
     try {
       const res = await fetch(apiUrl(), { signal: AbortSignal.timeout(2500) });
+      if (res.status === 401) {
+        ready = false;
+        setStatus("off", "🔒 登录已过期");
+        if (typeof api.onAuthLost === "function") api.onAuthLost();
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       remote = (await res.json()).blob;
     } catch (e) {
@@ -204,7 +210,10 @@
         method: "PUT", headers: { "content-type": "application/json" },
         body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw Object.assign(new Error(String(res.status)), { permanent: res.status >= 400 && res.status < 500 });
+      if (!res.ok) {
+        if (res.status === 401) throw Object.assign(new Error("401"), { unauthorized: true });
+        throw Object.assign(new Error(String(res.status)), { permanent: res.status >= 400 && res.status < 500 });
+      }
       const merged = (await res.json()).blob;
       applyInto(pending.store, merged.store, snap.store);
       ls.set(KEY, JSON.stringify(pending.store));
@@ -214,7 +223,11 @@
       if (pending === had) dirty = false; // 推送期间无新改动才算干净
       setStatus("on", "☁️ 已同步 " + hm());
     } catch (e) {
-      if (e.permanent) { ready = false; setStatus("off", "☁️ 云同步不可用"); } // 如旧门户无此接口：本次会话不再重试
+      if (e && e.unauthorized) {
+        ready = false;
+        setStatus("off", "🔒 登录已过期");
+        if (typeof api.onAuthLost === "function") api.onAuthLost();
+      } else if (e.permanent) { ready = false; setStatus("off", "☁️ 云同步不可用"); } // 如旧门户无此接口：本次会话不再重试
       else { dirty = true; setStatus("off", "☁️ 未联网 · 暂存本机"); }
     } finally {
       pushing = false;
@@ -240,6 +253,16 @@
     if (!ready) return Promise.resolve();
     if (timer != null) { clearTimeout(timer); timer = null; }
     return pending ? push() : Promise.resolve();
+  }
+
+  // 登出/会话失效：停掉防抖与重试，避免拿旧身份继续写云。
+  function disable() {
+    ready = false;
+    pending = null;
+    dirty = false;
+    USER = "";
+    KEY = SKEY = SNAPK = CLCK = HKEY = EKEY = "";
+    if (timer != null) { clearTimeout(timer); timer = null; }
   }
 
   if (typeof document !== "undefined" && document.addEventListener) {

@@ -66,6 +66,66 @@ describe("同步码", () => {
   });
 });
 
+describe("账号分区（登录态）", () => {
+  it("setAccount 后 user() 优先账号 slot，keyFor 指向账号分区", () => {
+    ID.setCode("ab2cde"); // 匿名码仍在，但账号优先
+    expect(ID.setAccount({ slot: "abcd234567", email: "a@example.com" })).toBe(true);
+    expect(ID.user()).toBe("abcd234567");
+    expect(ID.account()).toBe("abcd234567");
+    expect(ID.accountEmail()).toBe("a@example.com");
+    expect(ID.keyFor(RAW)).toBe(RAW + ".abcd234567");
+  });
+
+  it("坏 slot 拒绝；clearAccount 回退匿名码", () => {
+    ID.setCode("ab2cde");
+    expect(ID.setAccount({ slot: "BAD!", email: "x" })).toBe(false);
+    expect(ID.user()).toBe("ab2cde");
+    expect(ID.setAccount({ slot: "abcd234567", email: "a@example.com" })).toBe(true);
+    ID.clearAccount();
+    expect(ID.user()).toBe("ab2cde");
+    expect(ID.accountEmail()).toBe("");
+  });
+
+  it("adoptLocal：匿名分区优先、旧版裸键补缺；只搬用户数据，不搬同步状态键", () => {
+    const m = globalThis.localStorage._m;
+    m.set(ID.CODE_KEY, "ab2cde");
+    for (const suf of ["", ".shuffle", ".hist", ".expl", ".seen", ".syncsnap", ".synccleared"]) {
+      m.set(RAW + ".ab2cde" + suf, "anon" + suf);
+    }
+    m.set(RAW, "legacy");
+    m.set(RAW + ".hist", "legacy.hist");
+    m.set(RAW + ".expl", "legacy.expl"); // 匿名分区没有 expl → 旧版补上
+    m.delete(RAW + ".ab2cde.expl");
+
+    ID.setAccount({ slot: "abcd234567", email: "a@example.com" });
+    expect(ID.adoptLocal(RAW)).toBe(true);
+    const to = RAW + ".abcd234567";
+    expect(m.get(to)).toBe("anon");
+    expect(m.get(to + ".shuffle")).toBe("anon.shuffle");
+    expect(m.get(to + ".hist")).toBe("anon.hist");
+    expect(m.get(to + ".expl")).toBe("legacy.expl"); // 匿名缺、旧版补
+    expect(m.get(to + ".seen")).toBe("anon.seen");
+    // 同步状态键不搬
+    expect(m.has(to + ".syncsnap")).toBe(false);
+    expect(m.has(to + ".synccleared")).toBe(false);
+    // 源分区已清空
+    expect(m.has(RAW)).toBe(false);
+    expect(m.has(RAW + ".hist")).toBe(false);
+    expect(m.has(RAW + ".ab2cde")).toBe(false);
+    expect(m.has(RAW + ".ab2cde.hist")).toBe(false);
+  });
+
+  it("登录态禁止 migrateTo 把账号分区搬走；clearPartition 清空账号分区", () => {
+    ID.setAccount({ slot: "abcd234567", email: "a@example.com" });
+    expect(ID.migrateTo(RAW, "z9k2mm")).toBe(false);
+    globalThis.localStorage.setItem(RAW + ".abcd234567", "X");
+    globalThis.localStorage.setItem(RAW + ".abcd234567.hist", "H");
+    ID.clearPartition(RAW);
+    expect(globalThis.localStorage.getItem(RAW + ".abcd234567")).toBeNull();
+    expect(globalThis.localStorage.getItem(RAW + ".abcd234567.hist")).toBeNull();
+  });
+});
+
 describe("迁移搬键（旧版槽 → 同步码分区）", () => {
   it("七键全搬、旧分区清空、身份切换、可退回标记", () => {
     const m = globalThis.localStorage._m;
