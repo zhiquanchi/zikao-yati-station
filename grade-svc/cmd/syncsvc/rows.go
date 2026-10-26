@@ -4,31 +4,12 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
 )
-
-const rowsSchema = `
-CREATE TABLE IF NOT EXISTS answers (
-  subject TEXT NOT NULL, "user" TEXT NOT NULL DEFAULT '', qid INTEGER NOT NULL,
-  u_json TEXT, s REAL, v REAL, g_score REAL, ts INTEGER NOT NULL, rec TEXT NOT NULL,
-  PRIMARY KEY (subject, "user", qid));
-CREATE TABLE IF NOT EXISTS history (
-  subject TEXT NOT NULL, "user" TEXT NOT NULL DEFAULT '', qid INTEGER NOT NULL, ts INTEGER NOT NULL,
-  u_json TEXT, s REAL,
-  PRIMARY KEY (subject, "user", qid, ts));
-CREATE TABLE IF NOT EXISTS explains (
-  subject TEXT NOT NULL, "user" TEXT NOT NULL DEFAULT '', qid INTEGER NOT NULL, ts INTEGER NOT NULL,
-  payload TEXT NOT NULL,
-  PRIMARY KEY (subject, "user", qid));`
-
-// ensureRows 建表（幂等）。
-func ensureRows(db *sql.DB) error {
-	_, err := db.Exec(rowsSchema)
-	return err
-}
 
 // numOrNull / rawOrNull：列提取的缺省语义——字段缺失或非数值按 NULL（统计端按 NULL 剔除）。
 func numOrNull(m map[string]json.RawMessage, key string) any {
@@ -50,9 +31,9 @@ func rawOrNull(m map[string]json.RawMessage, key string) any {
 // expandSlotRows：删旧行＋按合并结果重插（与 sync 表 upsert 同事务）。
 // 行展开是派生视图：单条畸形（qid 非数字等）跳过该行、不阻断落库——blob 侧 normalize 已把关，
 // 这里只防历史库里的意外。
-func expandSlotRows(tx *sql.Tx, subject, user string, merged mergedDoc) error {
+func expandSlotRows(ctx context.Context, tx *sql.Tx, subject, user string, merged mergedDoc) error {
 	for _, t := range []string{"answers", "history", "explains"} {
-		if _, err := tx.Exec(`DELETE FROM `+t+` WHERE subject = ? AND "user" = ?`, subject, user); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE subject = $1 AND user_slot = $2`, subject, user); err != nil {
 			return err
 		}
 	}
@@ -72,8 +53,8 @@ func expandSlotRows(tx *sql.Tx, subject, user string, merged mergedDoc) error {
 				gScore = numOrNull(gm, "score")
 			}
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO answers (subject, "user", qid, u_json, s, v, g_score, ts, rec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO answers (subject, user_slot, qid, u_json, s, v, g_score, ts, rec) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			subject, user, qid, rawOrNull(m, "u"), numOrNull(m, "s"), numOrNull(m, "v"), gScore, int64(numRaw(m["ts"])), string(rec)); err != nil {
 			return err
 		}
@@ -93,8 +74,10 @@ func expandSlotRows(tx *sql.Tx, subject, user string, merged mergedDoc) error {
 				if json.Unmarshal(e, &em) != nil {
 					continue
 				}
-				if _, err := tx.Exec(
-					`INSERT OR REPLACE INTO history (subject, "user", qid, ts, u_json, s) VALUES (?, ?, ?, ?, ?, ?)`,
+				if _, err := tx.ExecContext(ctx,
+					`INSERT INTO history (subject, user_slot, qid, ts, u_json, s) VALUES ($1, $2, $3, $4, $5, $6)
+					 ON CONFLICT (subject, user_slot, qid, ts)
+					 DO UPDATE SET u_json = excluded.u_json, s = excluded.s`,
 					subject, user, qid, int64(numRaw(em["ts"])), rawOrNull(em, "u"), numOrNull(em, "s")); err != nil {
 					return err
 				}
@@ -107,8 +90,10 @@ func expandSlotRows(tx *sql.Tx, subject, user string, merged mergedDoc) error {
 			if err != nil {
 				continue
 			}
-			if _, err := tx.Exec(
-				`INSERT OR REPLACE INTO explains (subject, "user", qid, ts, payload) VALUES (?, ?, ?, ?, ?)`,
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO explains (subject, user_slot, qid, ts, payload) VALUES ($1, $2, $3, $4, $5)
+				 ON CONFLICT (subject, user_slot, qid)
+				 DO UPDATE SET ts = excluded.ts, payload = excluded.payload`,
 				subject, user, qid, int64(recTs(v)), string(v)); err != nil {
 				return err
 			}
@@ -118,21 +103,18 @@ func expandSlotRows(tx *sql.Tx, subject, user string, merged mergedDoc) error {
 }
 
 // rebuildRows：启动全量重建派生行（幂等）。存量库首次升级即在此完成 blob→行 的迁移。
-func rebuildRows(db *sql.DB) error {
-	if err := ensureRows(db); err != nil {
-		return err
-	}
-	tx, err := db.Begin()
+func rebuildRows(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	for _, t := range []string{"answers", "history", "explains"} {
-		if _, err := tx.Exec(`DELETE FROM ` + t); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t); err != nil {
 			return err
 		}
 	}
-	rows, err := tx.Query(`SELECT subject, "user", blob FROM sync`)
+	rows, err := tx.QueryContext(ctx, `SELECT subject, user_slot, blob FROM sync`)
 	if err != nil {
 		return err
 	}
@@ -156,7 +138,7 @@ func rebuildRows(db *sql.DB) error {
 		if json.Unmarshal([]byte(s.blob), &merged) != nil {
 			continue // 坏 blob 行跳过（GET 侧同语义按空槽容错）
 		}
-		if err := expandSlotRows(tx, s.subject, s.user, merged); err != nil {
+		if err := expandSlotRows(ctx, tx, s.subject, s.user, merged); err != nil {
 			return err
 		}
 	}
@@ -166,30 +148,32 @@ func rebuildRows(db *sql.DB) error {
 // ——— /stats/<subject>：内网统计端点（读派生行，portal 不转发）———
 
 type statQuestion struct {
-	Qid      int64   `json:"qid"`
-	Total    int     `json:"total"`    // 有记录数（含墓碑外的一切）
-	Answered int     `json:"answered"` // 实际作答过（u 非空）
-	Avg      *float64 `json:"avg"`     // 平均分（s 非空者）
-	Pass     int     `json:"pass"`     // ≥60
-	Mastered int     `json:"mastered"` // ≥80
+	Qid      int64    `json:"qid"`
+	Total    int64    `json:"total"`    // 有记录数（含墓碑外的一切）
+	Answered int64    `json:"answered"` // 实际作答过（u 非空）
+	Avg      *float64 `json:"avg"`      // 平均分（s 非空者）
+	Pass     int64    `json:"pass"`     // ≥60
+	Mastered int64    `json:"mastered"` // ≥80
 }
 
 type statUser struct {
 	User     string   `json:"user"`
-	Answered int      `json:"answered"`
+	Answered int64    `json:"answered"`
 	Avg      *float64 `json:"avg"`
-	Mastered int      `json:"mastered"`
+	Mastered int64    `json:"mastered"`
 }
 
-func (st *slotStore) handleStats(w http.ResponseWriter, subject string) {
+func (st *slotStore) handleStats(w http.ResponseWriter, r *http.Request, subject string) {
 	if subject == "" || !subjectRe.MatchString(subject) {
 		writeJSON(w, 404, map[string]string{"error": "bad_subject"})
 		return
 	}
+	ctx, cancel := withTimeout(r.Context())
+	defer cancel()
 	qs := []statQuestion{}
-	rows, err := st.db.Query(`SELECT qid, COUNT(*), SUM(CASE WHEN u_json IS NOT NULL THEN 1 ELSE 0 END),
+	rows, err := st.db.QueryContext(ctx, `SELECT qid, COUNT(*), SUM(CASE WHEN u_json IS NOT NULL THEN 1 ELSE 0 END),
 		AVG(s), SUM(CASE WHEN s >= 60 THEN 1 ELSE 0 END), SUM(CASE WHEN s >= 80 THEN 1 ELSE 0 END)
-		FROM answers WHERE subject = ? GROUP BY qid ORDER BY qid`, subject)
+		FROM answers WHERE subject = $1 GROUP BY qid ORDER BY qid`, subject)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
 		return
@@ -197,7 +181,7 @@ func (st *slotStore) handleStats(w http.ResponseWriter, subject string) {
 	for rows.Next() {
 		var q statQuestion
 		var avg sql.NullFloat64
-		var pass, mastered int
+		var pass, mastered int64
 		if err := rows.Scan(&q.Qid, &q.Total, &q.Answered, &avg, &pass, &mastered); err != nil {
 			continue
 		}
@@ -210,9 +194,9 @@ func (st *slotStore) handleStats(w http.ResponseWriter, subject string) {
 	}
 	rows.Close()
 	us := []statUser{}
-	rows2, err := st.db.Query(`SELECT "user", SUM(CASE WHEN u_json IS NOT NULL THEN 1 ELSE 0 END),
+	rows2, err := st.db.QueryContext(ctx, `SELECT user_slot, SUM(CASE WHEN u_json IS NOT NULL THEN 1 ELSE 0 END),
 		AVG(s), COUNT(DISTINCT CASE WHEN s >= 80 THEN qid END)
-		FROM answers WHERE subject = ? GROUP BY "user" ORDER BY "user"`, subject)
+		FROM answers WHERE subject = $1 GROUP BY user_slot ORDER BY user_slot`, subject)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
 		return

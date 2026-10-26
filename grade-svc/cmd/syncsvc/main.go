@@ -2,13 +2,15 @@
 // 路由：GET/PUT /store/<subject>/<user>；/store/<subject>（或 /store/<subject>/）即 user=” 旧版兼容全局槽，
 // /store/<subject>/<同步码> 为私有槽；GET /stats/<subject> 内网统计（读派生行表，见 rows.go）。
 // 合并/校验/落库见 store.go，跨语言口径由 merge_golden.json 锁定。
-// 与判分服务同 module 不同命令：本服务不持密钥、不吃 SUBJECT_DIR；compose 内网 8793、不映射宿主端口。
-// 本地启动：STORE_DB=/tmp/sync.db go run ./cmd/syncsvc（默认 STORE_DB=/data/sync.db 为容器路径）。
+// 与判分服务同 module 不同命令：本服务不持 QWEN 密钥、不吃 SUBJECT_DIR；compose 内网 8793、不映射宿主端口。
+// 存储为 PostgreSQL（DATABASE_URL），迁移与连接池见 db.go。
+// 本地启动：DATABASE_URL='postgres://exam:exam@127.0.0.1:5432/exam?sslmode=disable' go run ./cmd/syncsvc
 package main
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -62,6 +64,12 @@ func runNormalizeStdin() {
 func newSyncMux(st *slotStore) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := withTimeout(r.Context())
+		defer cancel()
+		if err := st.db.PingContext(ctx); err != nil {
+			writeJSON(w, 503, map[string]any{"ok": false, "service": "sync-svc", "error": "db_unavailable"})
+			return
+		}
 		writeJSON(w, 200, map[string]any{"ok": true, "service": "sync-svc"})
 	})
 	mux.HandleFunc("/store/", func(w http.ResponseWriter, r *http.Request) {
@@ -78,29 +86,70 @@ func newSyncMux(st *slotStore) *http.ServeMux {
 			writeJSON(w, 400, map[string]string{"error": "bad_user"})
 			return
 		}
-		st.handleStore(w, r, subject, user)
+		// 同步必须登录：以会话身份为准，路径 slot 只做一致性校验（防止拿别人的槽位读写）。
+		u, err := st.lookupSession(r.Context(), sessionTokenFromRequest(r))
+		if err != nil {
+			writeJSON(w, 401, map[string]string{"error": "unauthorized"})
+			return
+		}
+		if user != "" && user != u.Slot {
+			writeJSON(w, 403, map[string]string{"error": "forbidden_slot"})
+			return
+		}
+		st.handleStore(w, r, subject, u.Slot)
 	})
+	// 认证端点：门户把 /<prefix>/api/auth/* 纯转发到 /auth/*。
+	mux.HandleFunc("POST /auth/register", st.handleRegister)
+	mux.HandleFunc("POST /auth/login", st.handleLogin)
+	mux.HandleFunc("POST /auth/logout", st.handleLogout)
+	mux.HandleFunc("GET /auth/me", st.handleMe)
+	mux.HandleFunc("POST /auth/verify-email", st.handleVerifyEmail)
+	mux.HandleFunc("POST /auth/request-reset", st.handleRequestReset)
+	mux.HandleFunc("POST /auth/reset-password", st.handleResetPassword)
+	mux.HandleFunc("POST /auth/resend-verify", st.handleResendVerify)
+	// 判分服务内网校验：门户不转发，compose 不映射宿主端口。
+	mux.HandleFunc("GET /internal/session", st.handleInternalSession)
 	// 统计端点：读派生行表聚合（逐题作答量/平均分/通过率 + 逐用户汇总）。
 	// 仅容器内网可达（compose 不映射宿主端口、portal 不转发），站长 ssh 上机 curl 使用。
 	mux.HandleFunc("GET /stats/{subject}", func(w http.ResponseWriter, r *http.Request) {
-		st.handleStats(w, r.PathValue("subject"))
+		st.handleStats(w, r, r.PathValue("subject"))
 	})
 	return mux
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-reset-password" {
+		runResetPassword()
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "-normalize" {
 		runNormalizeStdin()
 		return
 	}
-	dbPath := os.Getenv("STORE_DB")
-	if dbPath == "" {
-		dbPath = "/data/sync.db" // 线上命名卷 portal-store 原地复用（旧版数据零搬迁）
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatalf("缺少 DATABASE_URL（PostgreSQL DSN），拒绝启动")
 	}
-	st, err := openStore(dbPath)
+	st, err := openStore(dsn)
 	if err != nil {
 		log.Fatalf("云同步存储初始化失败（拒启）：%v", err)
 	}
+	if st.mailEnabled() {
+		log.Printf("📧 邮件服务已启用（阿里云 DirectMail）")
+	} else {
+		log.Printf("ℹ 邮件服务未启用（MAIL_DRIVER=none）：验证/找回密码接口返回 503")
+	}
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := st.cleanupExpiredSessions(ctx); err != nil {
+				log.Printf("清理过期会话失败：%v", err)
+			}
+			cancel()
+		}
+	}()
 	host := os.Getenv("SYNC_HOST")
 	if host == "" {
 		host = "127.0.0.1" // 主机直跑仅本机可达；容器内由 Dockerfile 设 0.0.0.0，编排网络隔离
@@ -111,6 +160,6 @@ func main() {
 	}
 	addr := host + ":" + port
 	srv := &http.Server{Addr: addr, Handler: newSyncMux(st), ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("☁️ 云同步服务已启动 http://%s/store/<subject>/<user>（db=%s）", addr, dbPath)
+	log.Printf("☁️ 云同步服务已启动 http://%s/store/<subject>/<user>（postgres）", addr)
 	log.Fatal(srv.ListenAndServe())
 }

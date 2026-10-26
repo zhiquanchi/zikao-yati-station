@@ -1,8 +1,8 @@
-// 云同步槽位存储（多用户改造 · Go 端实现）：
+// 云同步槽位存储（Go 端实现，PostgreSQL）：
 // 合并口径与前端 web/sync.js 跨语言两份实现，由 test/fixtures/merge_golden.json 单一夹具逐字段锁定
 // （JS 侧 test/merge_xcheck.test.js、Go 侧 store_golden_test.go）——改口径两实现同改后重跑
 // scripts/gen-merge-golden.js 刷新夹具，任何单侧漂移必红。
-// 槽位 = (subject, user)：user='' 为旧版兼容全局槽（线上存量进度原地续用），其余为同步码私有槽。
+// 槽位 = (subject, user_slot)：user_slot='' 为旧版兼容槽（导入/回滚用），其余为账号或旧同步码槽。
 // JSON 一律以 json.RawMessage 原文流转：合并不改数格式与键序，返回契约与旧 portal/store.js 逐字段一致。
 // 存储双形态：sync 表整 blob 仍是线上协议与合并事实源（旧客户端零破坏）；每次 PUT 合并后
 // 同事务把结果展开成逐题行（answers/history/explains，见 rows.go）——派生读模型供统计查询，
@@ -11,18 +11,14 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
+	"context"
 	"encoding/json"
 	"io"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // maxBody：v2 载荷含 hist（每题≤10 次归档）与 expl（逐题解析缓存）全量，上限放宽到 4MB。
@@ -455,92 +451,8 @@ func normalizeIncoming(raw []byte) *incomingDoc {
 	return inc
 }
 
-// ——— SQLite 槽位表（(subject, user) 复合主键；user='' 旧版兼容槽）———
-
-const schemaSQL = `CREATE TABLE sync (subject TEXT NOT NULL, "user" TEXT NOT NULL DEFAULT '', blob TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (subject, "user"));`
-
-type slotStore struct{ db *sql.DB }
-
-func openStore(path string) (*slotStore, error) {
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, err
-		}
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1) // 单写者收敛：与旧版 bun:sqlite 进程内串行等价，杜绝 SQLITE_BUSY
-	if _, err := db.Exec(`PRAGMA journal_mode = WAL;`); err != nil {
-		return nil, err
-	}
-	if err := migrateSlots(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	// 派生行表启动全量重建（幂等自愈：行是 blob 的视图，坏了重展开即可）；失败同样拒启
-	if err := rebuildRows(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &slotStore{db}, nil
-}
-
-// migrateSlots：幂等。缺表建新版；检出旧单槽表（无 user 列）则事务内重建并回填 user=''，
-// 迁移失败必须拒启——宁可不服务，也不丢存量进度。
-func migrateSlots(db *sql.DB) error {
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync'`).Scan(&n); err != nil {
-		return err
-	}
-	if n == 0 {
-		_, err := db.Exec(schemaSQL)
-		return err
-	}
-	rows, err := db.Query(`PRAGMA table_info(sync)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	hasUser := false
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notnull int
-		var dflt sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			return err
-		}
-		if name == "user" {
-			hasUser = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if hasUser {
-		return nil
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	stmts := []string{
-		`ALTER TABLE sync RENAME TO sync_legacy_single_slot`,
-		schemaSQL,
-		`INSERT INTO sync (subject, "user", blob, updated_at) SELECT subject, '', blob, updated_at FROM sync_legacy_single_slot`,
-		`DROP TABLE sync_legacy_single_slot`,
-	}
-	for _, s := range stmts {
-		if _, err := tx.Exec(s); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
+// ——— 槽位表（(subject, user_slot) 复合主键；user_slot='' 为旧版兼容槽）———
+// 连接池、goose 迁移与启动重建见 db.go；本文件只保留合并与读写逻辑。
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	b, err := json.Marshal(v)
@@ -558,7 +470,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func (st *slotStore) handleStore(w http.ResponseWriter, r *http.Request, subject, user string) {
 	switch r.Method {
 	case http.MethodGet:
-		st.getSlot(w, subject, user)
+		st.getSlot(w, r, subject, user)
 		return
 	case http.MethodPut:
 		st.putSlot(w, r, subject, user)
@@ -569,9 +481,11 @@ func (st *slotStore) handleStore(w http.ResponseWriter, r *http.Request, subject
 	io.WriteString(w, "Method Not Allowed")
 }
 
-func (st *slotStore) queryBlob(subject, user string) (json.RawMessage, bool) {
+func (st *slotStore) queryBlob(ctx context.Context, subject, user string) (json.RawMessage, bool) {
+	ctx, cancel := withTimeout(ctx)
+	defer cancel()
 	var blob string
-	err := st.db.QueryRow(`SELECT blob FROM sync WHERE subject = ? AND "user" = ?`, subject, user).Scan(&blob)
+	err := st.db.QueryRowContext(ctx, `SELECT blob FROM sync WHERE subject = $1 AND user_slot = $2`, subject, user).Scan(&blob)
 	if err != nil {
 		return nil, false
 	}
@@ -581,8 +495,8 @@ func (st *slotStore) queryBlob(subject, user string) (json.RawMessage, bool) {
 	return json.RawMessage(blob), true
 }
 
-func (st *slotStore) getSlot(w http.ResponseWriter, subject, user string) {
-	blob, ok := st.queryBlob(subject, user)
+func (st *slotStore) getSlot(w http.ResponseWriter, r *http.Request, subject, user string) {
+	blob, ok := st.queryBlob(r.Context(), subject, user)
 	if !ok {
 		blob = json.RawMessage("null")
 	}
@@ -606,10 +520,33 @@ func (st *slotStore) putSlot(w http.ResponseWriter, r *http.Request, subject, us
 		writeJSON(w, 400, map[string]string{"error": "bad_payload"})
 		return
 	}
-	current, ok := st.queryBlob(subject, user)
+
+	ctx, cancel := withTimeout(r.Context())
+	defer cancel()
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
+		return
+	}
+	defer tx.Rollback()
+
+	// 先确保槽位行存在，再 FOR UPDATE 锁住它：同一 (科目, 槽位) 的并发 PUT 串行合并，
+	// 不同槽位互不阻塞（旧 SQLite 版先 SELECT 再写，存在覆盖窗口）。
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sync (subject, user_slot, blob, updated_at) VALUES ($1, $2, $3, 0) ON CONFLICT (subject, user_slot) DO NOTHING`,
+		subject, user, `{"store":{},"shuf":null,"clearedAt":0}`); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
+		return
+	}
+	var current string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT blob FROM sync WHERE subject = $1 AND user_slot = $2 FOR UPDATE`, subject, user).Scan(&current); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
+		return
+	}
 	var cur *blobDoc
-	if ok {
-		cur = parseBlob(current)
+	if json.Valid([]byte(current)) {
+		cur = parseBlob(json.RawMessage(current))
 	}
 	merged := mergeBlobs(cur, &blobDoc{store: inc.store, shuf: inc.shuf, clearedAt: inc.clearedAt, hist: inc.hist, expl: inc.expl}, time.Now().UnixMilli())
 	blob, err := json.Marshal(merged)
@@ -618,19 +555,13 @@ func (st *slotStore) putSlot(w http.ResponseWriter, r *http.Request, subject, us
 		return
 	}
 	// 整 blob（事实源）与逐题行（派生读模型）同事务落库：行永远与 blob 一致
-	tx, err := st.db.Begin()
-	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
-		return
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(
-		`INSERT INTO sync (subject, "user", blob, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(subject, "user") DO UPDATE SET blob = excluded.blob, updated_at = excluded.updated_at`,
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sync (subject, user_slot, blob, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (subject, user_slot) DO UPDATE SET blob = excluded.blob, updated_at = excluded.updated_at`,
 		subject, user, string(blob), merged.UpdatedAt); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
 		return
 	}
-	if err := expandSlotRows(tx, subject, user, merged); err != nil {
+	if err := expandSlotRows(ctx, tx, subject, user, merged); err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal", "detail": err.Error()})
 		return
 	}

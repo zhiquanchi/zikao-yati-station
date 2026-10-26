@@ -143,7 +143,14 @@ func main() {
 		host = "127.0.0.1" // 主机直跑仅本机可达；容器内设 0.0.0.0，由编排网络隔离、不映射到宿主机
 	}
 	addr := host + ":" + port
-	srv := &http.Server{Addr: addr, Handler: newMux(g), ReadHeaderTimeout: 5 * time.Second}
+	guard := newSessionGuard()
+	handler := guard.wrap(newMux(g))
+	if guard.enabled() {
+		log.Printf("🔐 判分鉴权已启用（会话校验：%s）", guard.url)
+	} else {
+		log.Printf("⚠️ 未配置 AUTH_VERIFY_URL：判分接口不鉴权（仅限本地开发）")
+	}
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("🤖 %s（%s）简答 AI 判分服务已启动 http://%s/api/grade（model=%s, key=%v, 参考资料=%d 字）",
 		subj.Name, subj.Code, addr, g.model, g.apiKey != "", len([]rune(subj.reference)))
 	log.Fatal(srv.ListenAndServe())
