@@ -1,7 +1,7 @@
 // 「考前重点记忆」数据装配（Bun 运行时）：把科目导图 md（同时是一份考点串讲）解析成结构化考点小节，
 // 再按每题的「考点X.Y」标注（data/explanations.json）与人工补映射（data/memo_kp.json）把题目 id 挂到小节上。
-// 产物进 QUIZ_DATA.memo，前端 web/memo.js 按作答记录判断小节是否还有未掌握题，渲染不含题干的记忆清单。
-// 只做解析/装配，判分与掌握度口径仍在前端纯函数（web/memo.js）与 Go 服务，互不影响。
+// 产物进 QUIZ_DATA.memo，前端 frontend/memo.js 按作答记录判断小节是否还有未掌握题，渲染不含题干的记忆清单。
+// 只做解析/装配，判分与掌握度口径仍在前端纯函数（frontend/memo.js）与 Go 服务，互不影响。
 import { existsSync, readFileSync } from "node:fs";
 
 const TAG = /〔[^〕]*〕/g;

@@ -15,7 +15,7 @@ read -r SUBJECT_NAME WEB_PORT GRADE_PORT < <(bun -e '
 ' "$SUBJ")
 
 GRADE_PORT="${GRADE_PORT_OVERRIDE:-$GRADE_PORT}"
-go build -o "/tmp/grade-svc-$SUBJ" ./grade-svc
+(cd backend/grade-svc && go build -o "/tmp/grade-svc-$SUBJ" .)
 SUBJECT_DIR="$PWD/subjects/$SUBJ" QWEN_MODEL="${QWEN_MODEL:-qwen3.8-flash}" GRADE_PORT="$GRADE_PORT" \
   "/tmp/grade-svc-$SUBJ" > "/tmp/grade-svc-$SUBJ.log" 2>&1 &
 SVC=$!

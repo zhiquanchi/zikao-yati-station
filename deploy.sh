@@ -50,11 +50,11 @@ bun run stage
 
 # —— 4. 本机交叉构建 linux/amd64 镜像（门户 + 云同步各 1 个 + 每科目判分 1 个，均取仓库根为上下文）——
 echo "🔨 构建 exam-portal、exam-sync 与 exam-grade-<科目>（linux/amd64）…"
-docker build --platform linux/amd64 -t exam-portal:latest -f portal/Dockerfile .
-docker build --platform linux/amd64 -t exam-sync:latest -f grade-svc/Dockerfile.sync .
+docker build --platform linux/amd64 -t exam-portal:latest -f backend/portal/Dockerfile .
+docker build --platform linux/amd64 -t exam-sync:latest -f backend/grade-svc/Dockerfile.sync .
 SAVE_IMAGES=(exam-portal:latest exam-sync:latest)
 for i in "${!SLUGS[@]}"; do
-  docker build --platform linux/amd64 -f grade-svc/Dockerfile --build-arg SUBJECT="${SLUGS[$i]}" -t "exam-grade-${PREFIXES[$i]}:latest" .
+  docker build --platform linux/amd64 -f backend/grade-svc/Dockerfile --build-arg SUBJECT="${SLUGS[$i]}" -t "exam-grade-${PREFIXES[$i]}:latest" .
   SAVE_IMAGES+=("exam-grade-${PREFIXES[$i]}:latest")
 done
 
@@ -66,7 +66,7 @@ docker save "${SAVE_IMAGES[@]}" |
 
 # —— 6. 同步运行编排与 env，启动（compose 按科目清单生成，勿手改）——
 bun scripts/gen-compose.js --remote > build/docker-compose.yml
-rsync -e "ssh -p $SSH_PORT -o BatchMode=yes" build/docker-compose.yml portal/.env.example "$SSH_HOST:$REMOTE_DIR/"
+rsync -e "ssh -p $SSH_PORT -o BatchMode=yes" build/docker-compose.yml backend/portal/.env.example "$SSH_HOST:$REMOTE_DIR/"
 S "[ -f $REMOTE_DIR/.env ] || cp $REMOTE_DIR/.env.example $REMOTE_DIR/.env"
 # 补齐 PostgreSQL 凭据：只在缺失时生成，已有密码不覆盖（否则重建容器会连不上旧数据卷）
 S "cd $REMOTE_DIR && touch .env && { grep -q '^POSTGRES_DB=' .env || echo 'POSTGRES_DB=exam' >> .env; }"

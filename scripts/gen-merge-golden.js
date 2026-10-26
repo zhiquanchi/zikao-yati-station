@@ -1,13 +1,13 @@
 // 云同步合并口径 golden 夹具生成器（bun scripts/gen-merge-golden.js，幂等可重跑）：
-// 多用户改造后合并逻辑跨语言两份实现——前端 web/sync.js（JS）与 grade-svc Go 云同步服务，
-// 由 test/fixtures/merge_golden.json 单一夹具分别被 test/merge_xcheck.test.js（JS 侧）与
-// grade-svc/store_golden_test.go（Go 侧）断言逐字段等价（替代原「JS↔JS 双实现对拍」守卫）。
+// 多用户改造后合并逻辑跨语言两份实现——前端 frontend/sync.js（JS）与 backend/grade-svc Go 云同步服务，
+// 由 tests/fixtures/merge_golden.json 单一夹具分别被 tests/merge_xcheck.test.js（JS 侧）与
+// backend/grade-svc/cmd/syncsvc/store_golden_test.go（Go 侧）断言逐字段等价（替代原「JS↔JS 双实现对拍」守卫）。
 // 期望值来源：merges 段用前端 mergeBlobs 计算（初版夹具由 portal/store.js 计算——彼时旧版
 // merge_xcheck 全绿锁定两 JS 实现等价，Go 侧 golden 断言又证明与夹具一致，三者同源可信）；
 // 载荷契约段 normalized 用 Go 端 normalizeIncoming 计算（syncsvc -normalize stdio 模式，服务端 JS 实现已退役）。
 // 改合并/校验口径：两实现同改后重跑本脚本刷新夹具，任何单侧漂移必红。
 import path from "node:path";
-import "../web/sync.js";
+import "../frontend/sync.js";
 
 const S = globalThis.SYNC;
 const NOW = 1790000000000;
@@ -135,7 +135,7 @@ const rawCases = [];
 
 async function normalizeViaGo(lines) {
   const proc = Bun.spawn(["go", "run", "./cmd/syncsvc", "-normalize"], {
-    cwd: path.join(import.meta.dir, "..", "grade-svc"), // import.meta.dir 保中文目录原文（URL.pathname 会百分号编码致 spawn ENOENT）
+    cwd: path.join(import.meta.dir, "..", "backend", "grade-svc"), // import.meta.dir 保中文目录原文（URL.pathname 会百分号编码致 spawn ENOENT）
     stdin: "pipe", stdout: "pipe", stderr: "pipe",
   });
   proc.stdin.write(lines.join("\n") + "\n");
@@ -162,6 +162,6 @@ const fixture = {
   merges,
   payloads,
 };
-const out = new URL("../test/fixtures/merge_golden.json", import.meta.url);
+const out = new URL("../tests/fixtures/merge_golden.json", import.meta.url);
 await Bun.write(out, JSON.stringify(fixture, null, 1) + "\n");
-console.log(`✅ test/fixtures/merge_golden.json：${merges.length} 组合并夹具 + ${payloads.length} 组载荷契约夹具`);
+console.log(`✅ tests/fixtures/merge_golden.json：${merges.length} 组合并夹具 + ${payloads.length} 组载荷契约夹具`);

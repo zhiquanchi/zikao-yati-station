@@ -3,6 +3,8 @@
 node_modules
 *.log
 .env
-grade-svc/grade-svc
-portal/test
+backend/grade-svc/grade-svc
+backend/portal/test
+tests
+docs
 data.js.bak

@@ -2,7 +2,7 @@
 
 2026 年 10 月自考押题自动判分练习站。**前端＝Bun 托管的纯静态演示站（零第三方依赖），后端逻辑＝Go 服务**（AI 判分与云同步）。一个仓库承载任意多个科目：
 
-- **共享引擎只有一份**：`web/`（前端演示层）、`grade-svc/`（Go 判分服务 + `cmd/syncsvc` 云同步存储）、`portal/`（门户壳：前缀路由 + 纯转发）——科目之间零复制、零手拷同步。
+- **共享引擎只有一份**：`frontend/`（前端演示层）、`backend/grade-svc/`（Go 判分服务 + `cmd/syncsvc` 云同步存储）、`backend/portal/`（门户壳：前缀路由 + 纯转发）——科目之间零复制、零手拷同步。
 - **科目 = 一个目录**：`subjects/<科目>/` 里只放科目身份（`subject.json`）、题库源数据与专属解析器、思维导图等，互不污染。
 - **部署全自动遍历科目**：`./deploy.sh` 按 `subjects/` 清单生成前端暂存、判分镜像、nginx location 与 compose，加科目不改任何脚本。
 
@@ -21,7 +21,7 @@ bun run build [科目…]        # 重建题库 data.js/questions.json 并刷新
 bun run stage [科目…]        # 合成部署形态 build/stage/<前缀>/（也可双击其中 index.html 本机直开）
 ./start-ai.sh os13180        # 本地联调 AI 判分（后台 Go 服务 + 前台静态站，需先 export QWEN_API_KEY=sk-xxx）
 bun test                     # 引擎回归 + 逐科目数据不变量 + 云同步/认证/代理回归（需 PostgreSQL：先 scripts/test-pg.sh 或 export TEST_DATABASE_URL）
-cd grade-svc && go test ./... # Go 判分/认证/云同步单测（假上游 + 测试 PostgreSQL；未设 TEST_DATABASE_URL 时 DB 用例跳过）
+cd backend/grade-svc && go test ./... # Go 判分/认证/云同步单测（假上游 + 测试 PostgreSQL；未设 TEST_DATABASE_URL 时 DB 用例跳过）
 ./deploy.sh                  # 线上一键发布（遍历全部科目，幂等）
 ```
 
@@ -43,18 +43,19 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 ## 仓库结构
 
 ```
-├── web/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js auth.js recite.js memo.js subject-switch.js
+├── frontend/                      # 前端引擎唯一份：index.html styles.css app.js grading.js sync.js identity.js auth.js recite.js memo.js subject-switch.js
 │   └── subjects.js           # 由 build 依据全部 subject.json 生成（切换器数据源，勿手改）
 ├── subjects/<科目>/
 │   ├── subject.json          # 科目身份唯一源：prefix/code/中文名/标题/storageKey/端口/特性开关/组卷参数/思维导图
 │   ├── data/                 # raw.txt + build_data.js（科目专属解析器）+ questions.json + 可选 explanations/essay_points/unordered/memo_kp
 │   ├── data.js               # 生成物（有意提交；QUIZ_DATA.meta 即 subject.json 的浏览器侧镜像）
 │   ├── mindmap.html          # 考点思维导图页（数据内联，科目产物）
-│   └── grade/reference.md    # 可选：单选逐项解析参考资料（须与根导图逐字一致，test/ref_sync.test.js 守）
-├── grade-svc/                # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入）+ cmd/syncsvc（账号/会话/云同步存储，PostgreSQL）+ Dockerfile.sync
-├── portal/                   # portal.js（科目清单驱动、api/auth 与 api/store 纯转发到 sync-svc，透传 Cookie）· subjects.json（生成的门户路由清单）
+│   └── grade/reference.md    # 可选：单选逐项解析参考资料（须与根导图逐字一致，tests/ref_sync.test.js 守）
+├── backend/
+│   ├── grade-svc/            # Go 判分服务唯一份（科目经 SUBJECT_DIR 注入）+ cmd/syncsvc（账号/会话/云同步存储，PostgreSQL）+ Dockerfile.sync
+│   └── portal/               # portal.js（科目清单驱动、api/auth 与 api/store 纯转发到 sync-svc，透传 Cookie）· subjects.json（生成的门户路由清单）
 ├── scripts/                  # config.js 科目装载器 · build-lib.js 装配共享层 · memo-lib.js 重点记忆装配 · build.js/stage.js/gen-compose.js/new-subject.js/gen-merge-golden.js/test-pg.sh
-├── test/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + 云同步 golden/身份/槽位/认证交叉 + 代理/清单守卫
+├── tests/                     # 引擎回归 + 逐科目不变量 + 科目精选用例 + 云同步 golden/身份/槽位/认证交叉 + 代理/清单守卫
 ├── server.js                 # 本地开发服务器（科目参数、静态双根、代理线上）
 ├── start-ai.sh               # 本地 AI 判分一键起（科目参数）
 └── deploy.sh                 # 线上一键发布（遍历科目）
@@ -69,13 +70,13 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 - **重新评分只作练习**：已判分的题再点「重新评分」，会算出并展示本次作答的分数（旁边标「练习分 · 不计入掌握」），但**不改写**首次记录的分数与掌握状态——统计、状态筛选、组卷权重都以首次评分为准。想重新计分请点「重做此题」清掉记录后再提交。
 - **解析**：每题都有「解析」按钮，未作答也可随时点开；点开过解析的题记 `v` 标记，之后判分不洗白：随机组卷时不论得分一律计入第二档优先再考，「重做此题」清标记重新开始。凡未满分的题判分后解析自动展开（简答除外：默认只展开得分，解析手动点）。解析结构化排版：📍考点标签 → 答案行 → 逐条短句（关键词加粗）→ 简答附「✅ 得分点」编号列表。加粗由数据 `**…**` 标记驱动，未标注回落启发式。开启 `flags.explain` 的科目，单选解析区另有「🤖 逐项解析」：点按钮即出「生成中」占位，AI 逐选项讲解「为什么是 / 为什么不是本题答案」（标签 `✓ 本题答案` / `✗ 非本题答案`，「不正确的是/不属于」类否定式题干也不会读反）——先在科目参考资料找依据（📖），资料不足自动联网补充（🔍）；联网级输出偶发不可解析时自动加重格式提醒重出一次。结果按题缓存本机派生键 `.expl` 并随 v2 云同步上云（跨设备复用，不重复烧 token）；失败时面板不消失，留「⚠ 错误条 + 重试」，网络中断/上游超时/输出解析失败都有明确提示。file:// 或 AI 不可用时不出现该按钮。
 - **随机组卷（约 100 分，目标分与题型分值可在 subject.json `paper` 配置）**：勾选后按分值加权抽题组模拟卷，顶部横幅显示卷面构成。出题权重：简答 > 填空 > 单选；同题型内**从未在刷题/组卷中出现过的最易入选（×8）**，出现过但看过解析/未作答/答错的次之（×4），出现过且 60~79 正常（×1），出现过且已掌握（≥80 未看解析）的降频（×0.3）。「出现过」＝题卡在刷题或组卷视图滚动进过视口、进过卷面、或有任何作答/看解析记录（存本机派生键 `.seen`，只存本机不入云同步；背答案模式滚动不算；「清空记录」连标记一并清零回到最高档）。**组卷范围跟随当前筛选**（章节/题型/状态/搜索圈池；池空不组卷、勾选回退、换一批保留原卷）；卷面生成后固定、刷新不变；组卷即全新（卷内旧作答清空并先归档进本机历史 `.hist`，每题留最近 10 次、只存本机、界面不显示）；组卷后状态筛选不再影响卷面（只圈池），章节/题型/搜索仍卷内收窄；题序先单选再填空后简答；「🎲 换一批」按最新掌握情况重组。
-- **📌 重点优先背（科目 `flags.recite` 开启，现为网络安全）**：顶栏入口按当前作答记录自动找出未掌握题（首次评分 <80，含未作答），按「答错（分低在前）→ 待提高 60~79 → 未作答」排优先队列；同档简答/填空先背（分值高、易失分），未作答里点开过解析的优先。全屏逐题背题卡：答案、得分点与解析直接展开（单选正确项标绿），可按未掌握档位/题型筛选、方向键左右翻题；**「✍ 开始练习 / 重做并练习」在当前背题页内直接出作答表单（不跳主列表）**，提交后原地显示得分、逐项反馈与解析并更新掌握与队列（已判分题按本次成绩覆盖原记录、取消不写盘）；练到 ≥80 分自动移出队列（统计/筛选/组卷权重仍只认首次评分）。**手机/窄屏打开时默认收起统计与筛选**（头部「显示/隐藏筛选」按钮随时切换，收起后仅保留一行战况），把最大高度留给题卡。入口角标实时显示队列题数；排序为纯函数 `web/recite.js`（`test/recite.test.js` 守），不新增存储键。
-- **📚 考前重点记忆（科目 `meta.memo` 开启，现为操作系统）**：顶栏入口按当前作答记录把考点串讲拆出的知识点**按掌握度过滤**——只列考点与要点、**不显示题干、不判分**，不新增存储键。清单按章分节（每节＝串讲一个小节，带“单选/填空/简答”题型标签），考点所挂题目全部 ≥80 分（与重点优先背同一掌握线）即标为「已掌握」并从「未掌握」默认视图移出，标注「答错 / 待提高 / 未作答」题数分布；可切「未掌握 / ❗ 答错 / 已掌握 / 全部」——「答错」视图只留有答错题的考点，并按答错数多少重排章与节，考前先啃失分点；按考点标题或知识点文字搜索、点标题折叠单节。手机端战况横滑、说明收起，把高度留给知识点。数据由 `scripts/memo-lib.js` 在 build 时从科目导图 md（同时是 `grade/reference.md`）解析并挂题目 id，前端纯函数 `web/memo.js`（`test/memo.test.js` 守）只读 store。
+- **📌 重点优先背（科目 `flags.recite` 开启，现为网络安全）**：顶栏入口按当前作答记录自动找出未掌握题（首次评分 <80，含未作答），按「答错（分低在前）→ 待提高 60~79 → 未作答」排优先队列；同档简答/填空先背（分值高、易失分），未作答里点开过解析的优先。全屏逐题背题卡：答案、得分点与解析直接展开（单选正确项标绿），可按未掌握档位/题型筛选、方向键左右翻题；**「✍ 开始练习 / 重做并练习」在当前背题页内直接出作答表单（不跳主列表）**，提交后原地显示得分、逐项反馈与解析并更新掌握与队列（已判分题按本次成绩覆盖原记录、取消不写盘）；练到 ≥80 分自动移出队列（统计/筛选/组卷权重仍只认首次评分）。**手机/窄屏打开时默认收起统计与筛选**（头部「显示/隐藏筛选」按钮随时切换，收起后仅保留一行战况），把最大高度留给题卡。入口角标实时显示队列题数；排序为纯函数 `frontend/recite.js`（`tests/recite.test.js` 守），不新增存储键。
+- **📚 考前重点记忆（科目 `meta.memo` 开启，现为操作系统）**：顶栏入口按当前作答记录把考点串讲拆出的知识点**按掌握度过滤**——只列考点与要点、**不显示题干、不判分**，不新增存储键。清单按章分节（每节＝串讲一个小节，带“单选/填空/简答”题型标签），考点所挂题目全部 ≥80 分（与重点优先背同一掌握线）即标为「已掌握」并从「未掌握」默认视图移出，标注「答错 / 待提高 / 未作答」题数分布；可切「未掌握 / ❗ 答错 / 已掌握 / 全部」——「答错」视图只留有答错题的考点，并按答错数多少重排章与节，考前先啃失分点；按考点标题或知识点文字搜索、点标题折叠单节。手机端战况横滑、说明收起，把高度留给知识点。数据由 `scripts/memo-lib.js` 在 build 时从科目导图 md（同时是 `grade/reference.md`）解析并挂题目 id，前端纯函数 `frontend/memo.js`（`tests/memo.test.js` 守）只读 store。
 - **批量提交**：作答自动存草稿（刷新不丢），底部悬浮条「已作答未提交 N 题」→「批量提交评分」一次性判分弹汇总（题数/平均分/满分题数）。
 - 顶部按章节/题型/状态（未作答、待提高 <60、已掌握 ≥80）筛选，支持题干搜索、背答案模式。
 - **手机适配**：≤640px 工具栏折叠「☰ 筛选设置」吸顶；输入控件 16px 防 iOS 聚焦缩放；触控热区加大、悬浮条避手势横条。手机连同 WiFi：`HOST=0.0.0.0 bun run start <科目>` 开 `http://<局域网IP>:<科目端口>/`。
 - 作答记录与得分存浏览器 localStorage（键基座 = subject.json `storageKey` + 账号 slot 分区后缀，派生键 `.shuffle` `.syncsnap` `.synccleared` `.expl` `.hist` `.seen`），刷新不丢；未登录访客用匿名码分区，**只存本机、不上云**。「清空记录」三道闸门（确认 → 输入 6 位随机码 → 最终确认），连历史留档一并清除并同步云端（只清本人槽位）。
-- **账号与云同步（多用户）**：邮箱 + 密码注册/登录（顶栏「🔑 登录 / ☁️ 已同步」芯片）。登录后经同源 `api/auth/*` 与 `api/store[/<slot>]` 自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」在本人槽位内全局压制。云端槽位 =（科目, 账号 slot），由 Go `grade-svc/cmd/syncsvc` 落 **PostgreSQL**；注册默认开放（`REGISTRATION_OPEN=0` 可关，`MAX_USERS` 可限总量），密码 PBKDF2-SHA256 600k + 随机盐，会话 Cookie `HttpOnly; SameSite=Lax; Path=/`（30 天，`Secure` 由 `COOKIE_SECURE`/`PUBLIC_ORIGIN` 自动判断）。**未登录可浏览题库与本地判分，云同步与 AI 判分返回 401**；退出登录清 Cookie，换设备用同一邮箱登录即续用。接口已鉴权，但仍建议勿存敏感数据；file:// 打开自动跳过云同步。
+- **账号与云同步（多用户）**：邮箱 + 密码注册/登录（顶栏「🔑 登录 / ☁️ 已同步」芯片）。登录后经同源 `api/auth/*` 与 `api/store[/<slot>]` 自动同步——每次保存后防抖 1.5 秒上推，打开时先拉取合并再渲染（超时 2.5 秒降级纯本机）。逐题按时间戳 LWW 合并；「重做此题」「清空答案」以删除墓碑传播；「清空记录」在本人槽位内全局压制。云端槽位 =（科目, 账号 slot），由 Go `backend/grade-svc/cmd/syncsvc` 落 **PostgreSQL**；注册默认开放（`REGISTRATION_OPEN=0` 可关，`MAX_USERS` 可限总量），密码 PBKDF2-SHA256 600k + 随机盐，会话 Cookie `HttpOnly; SameSite=Lax; Path=/`（30 天，`Secure` 由 `COOKIE_SECURE`/`PUBLIC_ORIGIN` 自动判断）。**未登录可浏览题库与本地判分，云同步与 AI 判分返回 401**；退出登录清 Cookie，换设备用同一邮箱登录即续用。接口已鉴权，但仍建议勿存敏感数据；file:// 打开自动跳过云同步。
 - **邮件服务（阿里云 DirectMail）**：邮箱验证（24 小时链接）与找回密码（30 分钟链接，单次使用，库里只存 SHA-256）；重置成功会删除该用户全部会话并把邮箱标记为已验证。`MAIL_DRIVER=none`（默认）时相关接口返回 503，注册/登录不受影响。启用步骤：
   1. 阿里云控制台开通「邮件推送 DirectMail」，认证发件域名/地址并创建发件地址（如 `no-reply@example.com`；新账号可能处于沙箱模式，需先把收件人加入白名单）。
   2. 创建 RAM 用户，授予最小权限 `dm:SingleSendMail`，生成 AccessKey ID/Secret。
@@ -90,7 +91,7 @@ bun run new-subject db 06414 数据库系统     # 生成 subjects/db06414/（pr
 
 ## 简答 AI 判分（grade-svc，可选增强）
 
-简答在本机估分后异步升级为千问语义判分（🤖 徽标 + 逐要点点评 + 整段总评「AI 完整回复」折叠块）；`grade-svc/` 为多科目共享的 Go 服务（OpenAI Go SDK · 兼容模式 · 默认 `qwen3.8-flash`），分数口径与本机引擎一致（三档锚点），同「题干+要点+作答」服务内缓存不重复计费。**科目身份经 `SUBJECT_DIR` 注入**：阅卷 prompt 科目名、逐项解析参考资料与资料名全部读自科目目录（`subject.json` + `grade/reference.md`），代码中无科目硬编码；未设 `SUBJECT_DIR` 直接拒启。
+简答在本机估分后异步升级为千问语义判分（🤖 徽标 + 逐要点点评 + 整段总评「AI 完整回复」折叠块）；`backend/grade-svc/` 为多科目共享的 Go 服务（OpenAI Go SDK · 兼容模式 · 默认 `qwen3.8-flash`），分数口径与本机引擎一致（三档锚点），同「题干+要点+作答」服务内缓存不重复计费。**科目身份经 `SUBJECT_DIR` 注入**：阅卷 prompt 科目名、逐项解析参考资料与资料名全部读自科目目录（`subject.json` + `grade/reference.md`），代码中无科目硬编码；未设 `SUBJECT_DIR` 直接拒启。
 
 - 本地：`export QWEN_API_KEY=sk-xxx && ./start-ai.sh <科目>`（判分端口读 subject.json；os=8792、net=8794）。本地未配置 `AUTH_VERIFY_URL` 时判分按开发模式放行；线上由 compose 注入，未登录返回 401。
 - 生产：`--build-arg SUBJECT=<科目目录>` 出每科目镜像（上下文 = 仓库根），每科目一个容器、容器内统一 8792、**有意不映射宿主端口**，密钥只在 Go 进程环境；**严禁把密钥写进前端源码或 data 文件**。线上判分额外要求登录：会话校验走 sync-svc 内网 `/internal/session`（45s 缓存，失败关闭）。
@@ -109,7 +110,7 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 - 科目 `data/build_data.js` 只负责「把自己的源 docx 版式解析成规范题目数组」；装配段（unordered 并列互换标记、简答精简考点 `essay_points.json` 覆盖与 `**关键词**` 剥标、主观题解析 `explanations.json` 合并、变体生成、产物落盘、meta 注入）全走共享层 `scripts/build-lib.js`，勿在科目里重复实现。
 - 「考前重点记忆」数据随 `bun run build` 生成：装配层读科目 `subject.json` 的 `mindmap.file`（考点串讲 md）拆成「章→节→要点」，再用 `data/explanations.json` 里的「考点X.Y」标注把题目挂到小节；没有标注的题（如纯单选）在 `data/memo_kp.json` 人工补映射（`{题号: ["X.Y"]}`，缺映射 build 会告警）。新增/调整串讲小节后重跑 build 即可，前端不做解析。
 - 撰写新题解析必须逐题参考该科目串讲/考点资料并标注考点；简答得分点用大模型逐题精简（只留拿分关键词），措辞须保持参考答案词序，否则「原文作答≈满分」锚点（逐科目测试 ≥95）会掉分。
-- 判分口径升级时（如填空重算迁移）跑全量 `bun test`；合并/校验逻辑改动会被 `test/fixtures/merge_golden.json` 单一夹具拦截——前端 sync.js（`test/merge_xcheck.test.js`）与 Go syncsvc（`grade-svc/store_golden_test.go`）跨语言两份实现各自断言同一夹具，改口径须两实现同改后重跑 `scripts/gen-merge-golden.js` 刷新，单侧漂移必红；不再有「三处同改」口头约定。
+- 判分口径升级时（如填空重算迁移）跑全量 `bun test`；合并/校验逻辑改动会被 `tests/fixtures/merge_golden.json` 单一夹具拦截——前端 sync.js（`tests/merge_xcheck.test.js`）与 Go syncsvc（`backend/grade-svc/store_golden_test.go`）跨语言两份实现各自断言同一夹具，改口径须两实现同改后重跑 `scripts/gen-merge-golden.js` 刷新，单侧漂移必红；不再有「三处同改」口头约定。
 
 ## 线上部署与发布
 

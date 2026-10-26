@@ -1,5 +1,5 @@
 // 本地开发静态服务器（Bun 运行时）：bun server.js <科目>（目录名或 prefix，如 os13180 / net / os）。
-// 静态双根解析：先科目目录（data.js、mindmap.html 等科目产物），再 web/（共享前端引擎）。
+// 静态双根解析：先科目目录（data.js、mindmap.html 等科目产物），再 frontend/（共享前端引擎）。
 // /api/grade 与 /api/store 默认代理线上（部署约定：本机不常驻判分/门户服务，本机与云端同源）：
 //   GRADE_API 用环境变量覆盖（./start-ai.sh <科目> 本地联调时自动指向本地 Go 服务）；
 //   STORE_API 置 off 可本机禁用云同步；/api/store 与 /api/store/<同步码> 尾段原样转发

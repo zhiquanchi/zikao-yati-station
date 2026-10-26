@@ -1,6 +1,7 @@
 # 多用户登录改造方案（含 PostgreSQL 迁移）
 
 > 状态：**阶段 0~3 与邮件服务已实施并上线**（2026-10-26）；域名 + TLS 待做。邮件默认 `MAIL_DRIVER=none`（相关接口 503），填入阿里云 DirectMail 凭据后启用。实施差异与验证结果见文末「附录 B」。
+> 目录重组说明（2026-10-26）：`web/` → `frontend/`，`portal/` → `backend/portal/`，`grade-svc/` → `backend/grade-svc/`，`test/` → `tests/`；下文路径已同步，早期「文件:行号」锚点可能随文件变动漂移。
 > 日期：2026-10-26
 > 决策来源：站长需求确认（邮箱+密码、匿名可浏览、同步/判分需登录、单人使用可手动迁移、数据库改 PostgreSQL、后期接域名/TLS/邮件服务）。
 
@@ -27,14 +28,14 @@
 
 | 事实 | 位置 |
 |---|---|
-| 同步码是全局身份，存在 `quizsync.code`，格式 `[a-z2-9]{4,10}` | `web/identity.js:9-13` |
-| 同步码同时是本地分区后缀：`storageKey + "." + 码`；无码则裸键（旧版兼容） | `web/identity.js:34` |
-| 新访客静默签发 6 位码；有旧版本地数据的设备不签发 | `web/identity.js:37-43` |
-| 切换用户只改 `quizsync.code`，不搬数据；迁移是「搬」7 个键 | `web/identity.js:45-62` |
-| 7 个分区键：`""`, `.shuffle`, `.syncsnap`, `.synccleared`, `.hist`, `.expl`, `.seen` | `web/identity.js:13` |
-| 启动顺序：`ID.ensure()` → `ID.keyFor()` → `await SYNC.prefetch(KEY, ID.user())` | `web/app.js:8-16` |
-| 派生键：`.shuffle` / `.seen` / `.hist` / `.expl` | `web/app.js:42,59,198,1110` |
-| 身份弹层：看码/复制/输码切换/一键迁移/退回旧版 | `web/app.js:1566-1604`，`web/index.html:111-124` |
+| 同步码是全局身份，存在 `quizsync.code`，格式 `[a-z2-9]{4,10}` | `frontend/identity.js:9-13` |
+| 同步码同时是本地分区后缀：`storageKey + "." + 码`；无码则裸键（旧版兼容） | `frontend/identity.js:34` |
+| 新访客静默签发 6 位码；有旧版本地数据的设备不签发 | `frontend/identity.js:37-43` |
+| 切换用户只改 `quizsync.code`，不搬数据；迁移是「搬」7 个键 | `frontend/identity.js:45-62` |
+| 7 个分区键：`""`, `.shuffle`, `.syncsnap`, `.synccleared`, `.hist`, `.expl`, `.seen` | `frontend/identity.js:13` |
+| 启动顺序：`ID.ensure()` → `ID.keyFor()` → `await SYNC.prefetch(KEY, ID.user())` | `frontend/app.js:8-16` |
+| 派生键：`.shuffle` / `.seen` / `.hist` / `.expl` | `frontend/app.js:42,59,198,1110` |
+| 身份弹层：看码/复制/输码切换/一键迁移/退回旧版 | `frontend/app.js:1566-1604`，`frontend/index.html:111-124` |
 
 **结论：同步码既是身份、又是凭据、又是本地分区键、又是云端槽位键。** 服务端只校验格式，不校验归属，知道码就能读写对应进度。
 
@@ -42,13 +43,13 @@
 
 | 事实 | 位置 |
 |---|---|
-| 同步 URL 为 `api/store[/<码>]`；`USER` 为空即旧版全局槽 | `web/sync.js:118-122` |
-| `prefetch` 拉云、按 `ts` LWW 合并、写回本地、再补推 | `web/sync.js:161-183` |
-| PUT 载荷含 `store/shuf/clearedAt`，v2 追加 `hist/expl` | `web/sync.js:193-206` |
-| 4xx 被视为永久失败（本会话不再同步） | `web/sync.js:207,217` |
-| 线上门户只透传 `content-type`，不转发 Cookie、不回传 Set-Cookie | `portal/portal.js:70-88` |
+| 同步 URL 为 `api/store[/<码>]`；`USER` 为空即旧版全局槽 | `frontend/sync.js:118-122` |
+| `prefetch` 拉云、按 `ts` LWW 合并、写回本地、再补推 | `frontend/sync.js:161-183` |
+| PUT 载荷含 `store/shuf/clearedAt`，v2 追加 `hist/expl` | `frontend/sync.js:193-206` |
+| 4xx 被视为永久失败（本会话不再同步） | `frontend/sync.js:207,217` |
+| 线上门户只透传 `content-type`，不转发 Cookie、不回传 Set-Cookie | `backend/portal/portal.js:70-88` |
 | 本地服务器同样只透传 `content-type` | `server.js:21-56,64-68` |
-| 门户路由只有 `api/grade` 与 `api/store`，`api/auth/*` 会落到静态 404 | `portal/portal.js:39-88` |
+| 门户路由只有 `api/grade` 与 `api/store`，`api/auth/*` 会落到静态 404 | `backend/portal/portal.js:39-88` |
 
 **结论：即使后端加了登录，只要代理不转发 Cookie，浏览器也永远登录不上。** 两个代理必须改。
 
@@ -56,14 +57,14 @@
 
 | 事实 | 位置 |
 |---|---|
-| 云同步服务 `cmd/syncsvc`：`/api/health`、`/store/...`、`/stats/<subject>` | `grade-svc/cmd/syncsvc/main.go:62-89` |
-| `user` 只校验格式 `^[a-z2-9]{4,10}$`，不做认证 | `grade-svc/cmd/syncsvc/store.go:31-35` |
-| SQLite 表：`sync(subject, "user", blob, updated_at)`，主键 `(subject,"user")` | `grade-svc/cmd/syncsvc/store.go:458-460` |
-| 旧单槽表迁移在启动时自动完成，失败拒启 | `grade-svc/cmd/syncsvc/store.go:490-543` |
-| PUT 先读后合并再写，读与写不在同一事务；并发 PUT 有覆盖窗口 | `grade-svc/cmd/syncsvc/store.go:609-640` |
-| 派生行表 `answers/history/explains`，启动全量重建 | `grade-svc/cmd/syncsvc/rows.go:13-25,120-164` |
-| `/stats` 逐用户聚合，`"user"` 直接输出同步码 | `grade-svc/cmd/syncsvc/rows.go:184-234` |
-| 判分服务无任何认证中间件 | `grade-svc/main.go:38-87,146` |
+| 云同步服务 `cmd/syncsvc`：`/api/health`、`/store/...`、`/stats/<subject>` | `backend/grade-svc/cmd/syncsvc/main.go:62-89` |
+| `user` 只校验格式 `^[a-z2-9]{4,10}$`，不做认证 | `backend/grade-svc/cmd/syncsvc/store.go:31-35` |
+| SQLite 表：`sync(subject, "user", blob, updated_at)`，主键 `(subject,"user")` | `backend/grade-svc/cmd/syncsvc/store.go:458-460` |
+| 旧单槽表迁移在启动时自动完成，失败拒启 | `backend/grade-svc/cmd/syncsvc/store.go:490-543` |
+| PUT 先读后合并再写，读与写不在同一事务；并发 PUT 有覆盖窗口 | `backend/grade-svc/cmd/syncsvc/store.go:609-640` |
+| 派生行表 `answers/history/explains`，启动全量重建 | `backend/grade-svc/cmd/syncsvc/rows.go:13-25,120-164` |
+| `/stats` 逐用户聚合，`"user"` 直接输出同步码 | `backend/grade-svc/cmd/syncsvc/rows.go:184-234` |
+| 判分服务无任何认证中间件 | `backend/grade-svc/main.go:38-87,146` |
 | 线上 HTTP 80，无 TLS | `deploy.sh:79-88` |
 
 ### 1.4 部署与测试
@@ -74,11 +75,11 @@
 | `sync-svc` 用命名卷 `portal-store` 挂 `/data` | `scripts/gen-compose.js:32-38` |
 | 发布探活：`/api/store` 必须含 `"blob"`；非法码必须 400 | `deploy.sh:101-118` |
 | 前端产物清单 `ENGINE_FILES` 固定 10 个文件 | `scripts/stage.js:8` |
-| 测试会构建并启动 `sync-svc`，直连临时 SQLite | `portal/test/store.test.js:1-52` |
-| 同步 URL 契约测试断言 `api/store/<码>` 与 `api/store` | `test/sync.test.js:148-208` |
-| 身份测试锁定 6 位码、7 键迁移、ensure 三分支 | `test/identity.test.js:24-103` |
-| 代理测试断言同步码尾段原样透传 | `test/server_proxy.test.js:175-197` |
-| 跨语言 golden 夹具锁定合并与载荷整形 | `test/fixtures/merge_golden.json`、`test/merge_xcheck.test.js`、`grade-svc/cmd/syncsvc/store_golden_test.go` |
+| 测试会构建并启动 `sync-svc`，直连临时 SQLite | `backend/portal/test/store.test.js:1-52` |
+| 同步 URL 契约测试断言 `api/store/<码>` 与 `api/store` | `tests/sync.test.js:148-208` |
+| 身份测试锁定 6 位码、7 键迁移、ensure 三分支 | `tests/identity.test.js:24-103` |
+| 代理测试断言同步码尾段原样透传 | `tests/server_proxy.test.js:175-197` |
+| 跨语言 golden 夹具锁定合并与载荷整形 | `tests/fixtures/merge_golden.json`、`tests/merge_xcheck.test.js`、`backend/grade-svc/cmd/syncsvc/store_golden_test.go` |
 
 ### 1.5 改造影响面（先看清再动手）
 
@@ -87,8 +88,8 @@
 - **必须改**：`cmd/syncsvc`（Postgres + 用户/会话表 + 认证路由 + 同步鉴权）。
 - **必须改**：`grade-svc`（会话校验中间件）。
 - **必须改**：`gen-compose.js`、`deploy.sh`（Postgres 服务、env、探活）。
-- **需要改测试**：`portal/test/store.test.js`、`syncsvc/store_test.go`、`rows_test.go`、`test/sync.test.js`、`test/server_proxy.test.js`、`test/identity.test.js`、`test/server_proxy.test.js:218` 的引擎清单。
-- **不用改**：`web/grading.js`、`grading.test.js`、各科 `data.js`、`merge_golden.json`（合并口径与数据库无关）。
+- **需要改测试**：`backend/portal/test/store.test.js`、`syncsvc/store_test.go`、`rows_test.go`、`tests/sync.test.js`、`tests/server_proxy.test.js`、`tests/identity.test.js`、`tests/server_proxy.test.js:218` 的引擎清单。
+- **不用改**：`frontend/grading.js`、`grading.test.js`、各科 `data.js`、`merge_golden.json`（合并口径与数据库无关）。
 
 ---
 
@@ -188,7 +189,7 @@ portal（Bun，纯转发，零业务逻辑）
 
 职责边界：
 
-- **portal/server.js**：只做静态文件、前缀路由、Cookie/Set-Cookie 与 `X-Forwarded-For` 透传、超时/错误码映射。**不判断登录状态、不解析 token、不碰数据库。**
+- **backend/portal/server.js**：只做静态文件、前缀路由、Cookie/Set-Cookie 与 `X-Forwarded-For` 透传、超时/错误码映射。**不判断登录状态、不解析 token、不碰数据库。**
 - **sync-svc**：用户注册/登录/登出、密码哈希、会话签发与校验、同步槽位读写、统计。唯一持有数据库凭据与密码材料的服务。
 - **grade-svc**：只做会话校验（调用 sync-svc 内网接口或读只读会话表），不持有用户密码材料。
 - **前端**：渲染登录 UI、保存账号显示信息、按登录状态决定是否发起同步/判分；不保存密码、不解析会话 token。
@@ -338,7 +339,7 @@ CREATE INDEX email_tokens_user_idx ON email_tokens(user_id, purpose);
 说明：
 
 - 门户对 `api/auth/*` 纯转发到 `SYNC_UP + "/auth/*"`。
-- `api/store` 的尾段 slot **可以保留**以减小前端改动；服务端以会话为准，路径 slot 只做一致性校验。这样 `test/sync.test.js` 的 URL 契约基本不变。
+- `api/store` 的尾段 slot **可以保留**以减小前端改动；服务端以会话为准，路径 slot 只做一致性校验。这样 `tests/sync.test.js` 的 URL 契约基本不变。
 - `/internal/session` 不被门户转发；compose 不映射宿主端口。可再加 `X-Internal-Token` 共享密钥做防御纵深（可选）。
 - 路径校验顺序：先校验 `subject`/slot 格式（保留 400 `bad_user` 探针），再校验会话（401）。这样 `deploy.sh` 的非法码探针仍然有效。
 
@@ -532,19 +533,19 @@ COMMIT;
   - 环境变量 `TEST_DATABASE_URL`（例如 `postgres://exam:exam@127.0.0.1:5432/exam_test?sslmode=disable`）。
   - 每个测试创建独立 schema：`CREATE SCHEMA test_<rand>` + `SET search_path`，`t.Cleanup` 时 `DROP SCHEMA ... CASCADE`。
   - 未设置 `TEST_DATABASE_URL` 时，DB 相关测试 `t.Skip` 并打印准备命令；这会降低默认测试覆盖率，是换 PG 的明确代价。
-- `portal/test/store.test.js`：
+- `backend/portal/test/store.test.js`：
   - `beforeAll` 不再建临时 SQLite；改为读取 `TEST_DATABASE_URL`，建独立 schema，spawn `sync-svc` 时注入 `DATABASE_URL`。
   - 所有请求需要先注册/登录拿 Cookie，`api()` helper 自动带 `Cookie`。
   - 未提供 `TEST_DATABASE_URL` 时跳过整组，并输出提示。
 - 不受影响：
-  - `test/fixtures/merge_golden.json`、`test/merge_xcheck.test.js`、`grade-svc/cmd/syncsvc/store_golden_test.go`（合并与整形是纯函数）。
-  - `test/grading.test.js`、各科数据测试。
-  - `test/identity.test.js` 的匿名码部分（新增账号用例）。
+  - `tests/fixtures/merge_golden.json`、`tests/merge_xcheck.test.js`、`backend/grade-svc/cmd/syncsvc/store_golden_test.go`（合并与整形是纯函数）。
+  - `tests/grading.test.js`、各科数据测试。
+  - `tests/identity.test.js` 的匿名码部分（新增账号用例）。
 - 新增：
-  - `grade-svc/cmd/syncsvc/auth_test.go`（注册/登录/登出/me/重复邮箱/坏密码/限流/Cookie 属性/会话过期）。
-  - `grade-svc/cmd/syncsvc/authz_test.go`（无会话 401、slot 不匹配 403、`/internal/session`）。
-  - `grade-svc/auth_test.go`（判分中间件：有效/无效/过期/服务不可达）。
-  - `test/auth.test.js`（前端 `web/auth.js` 的请求形状/错误映射，纯 fetch stub）。
+  - `backend/grade-svc/cmd/syncsvc/auth_test.go`（注册/登录/登出/me/重复邮箱/坏密码/限流/Cookie 属性/会话过期）。
+  - `backend/grade-svc/cmd/syncsvc/authz_test.go`（无会话 401、slot 不匹配 403、`/internal/session`）。
+  - `backend/grade-svc/auth_test.go`（判分中间件：有效/无效/过期/服务不可达）。
+  - `tests/auth.test.js`（前端 `frontend/auth.js` 的请求形状/错误映射，纯 fetch stub）。
   - 代理测试新增 Cookie/Set-Cookie 透传断言。
 
 本地准备测试库：
@@ -555,7 +556,7 @@ docker run --rm -d --name exam-pg-test \
   -p 127.0.0.1:5432:5432 postgres:17-alpine
 
 export TEST_DATABASE_URL='postgres://exam:exam@127.0.0.1:5432/exam_test?sslmode=disable'
-cd grade-svc && go test ./...
+cd backend/grade-svc && go test ./...
 cd .. && bun test
 ```
 
@@ -682,9 +683,9 @@ cd .. && bun test
 
 ### P0：PostgreSQL 落地
 
-- [ ] `grade-svc/go.mod` 增加 `github.com/jackc/pgx/v5`、`github.com/pressly/goose/v3`。
-- [ ] 新增 `grade-svc/cmd/syncsvc/db.go`：打开连接池、设置超时、执行迁移、健康检查。
-- [ ] 新增 `grade-svc/cmd/syncsvc/migrations/0001_init.sql`（第 5.2 节 DDL）。
+- [ ] `backend/grade-svc/go.mod` 增加 `github.com/jackc/pgx/v5`、`github.com/pressly/goose/v3`。
+- [ ] 新增 `backend/grade-svc/cmd/syncsvc/db.go`：打开连接池、设置超时、执行迁移、健康检查。
+- [ ] 新增 `backend/grade-svc/cmd/syncsvc/migrations/0001_init.sql`（第 5.2 节 DDL）。
 - [ ] 重写 `store.go` / `rows.go` 的 SQL（占位符、类型、`user_slot`）。
 - [ ] `putSlot` 改为事务 + `FOR UPDATE`。
 - [ ] `scripts/gen-compose.js` 增加 `postgres` 服务与 `pgdata` 卷。
@@ -694,9 +695,9 @@ cd .. && bun test
 
 ### P1：Go 认证核心
 
-- [ ] `grade-svc/cmd/syncsvc/password.go`：PBKDF2 哈希/校验/参数解析。
-- [ ] `grade-svc/cmd/syncsvc/session.go`：token 生成/哈希/Cookie 读写/过期清理。
-- [ ] `grade-svc/cmd/syncsvc/auth.go`：register/login/logout/me、邮箱校验、限流、`REGISTRATION_OPEN`。
+- [ ] `backend/grade-svc/cmd/syncsvc/password.go`：PBKDF2 哈希/校验/参数解析。
+- [ ] `backend/grade-svc/cmd/syncsvc/session.go`：token 生成/哈希/Cookie 读写/过期清理。
+- [ ] `backend/grade-svc/cmd/syncsvc/auth.go`：register/login/logout/me、邮箱校验、限流、`REGISTRATION_OPEN`。
 - [ ] `main.go` 挂载 `/auth/*` 与 `/internal/session`。
 - [ ] `-reset-password` 管理员 CLI。
 - [ ] 单测：`auth_test.go`、`authz_test.go`。
@@ -707,7 +708,7 @@ cd .. && bun test
 - [ ] `/store/*` 要求会话；登录后 slot 只能等于账号 slot；路径格式校验先于会话。
 - [ ] 关闭匿名云同步（无会话一律 401）。
 - [ ] `grade-svc` 增加会话校验中间件：调用 `/internal/session`，30~60s 缓存，失败关闭。
-- [ ] `portal/portal.js`：
+- [ ] `backend/portal/portal.js`：
   - [ ] 新增 `api/auth/*` 转发。
   - [ ] `api/store`、`api/grade` 转发 `cookie` 与 `x-forwarded-for`。
   - [ ] 认证响应回传 `set-cookie`。
@@ -720,15 +721,15 @@ cd .. && bun test
 
 ### P3：前端登录 UI 与启动流程
 
-- [ ] 新增 `web/auth.js`（`window.AUTH`）：`me/register/login/logout`、错误码中文映射。
-- [ ] `web/identity.js`：账号优先、`setAccount/clearAccount/adoptAnonymous`。
-- [ ] `web/app.js`：启动改异步；登录态决定是否 `prefetch`；`onUnauthorized` 弹登录。
-- [ ] `web/sync.js`：`disable()`、401 回调、未登录不排期。
-- [ ] `web/index.html`：身份弹层改为登录/注册/账号面板；增加 `<script src="auth.js">`。
-- [ ] `web/styles.css`：表单与账号面板样式。
+- [ ] 新增 `frontend/auth.js`（`window.AUTH`）：`me/register/login/logout`、错误码中文映射。
+- [ ] `frontend/identity.js`：账号优先、`setAccount/clearAccount/adoptAnonymous`。
+- [ ] `frontend/app.js`：启动改异步；登录态决定是否 `prefetch`；`onUnauthorized` 弹登录。
+- [ ] `frontend/sync.js`：`disable()`、401 回调、未登录不排期。
+- [ ] `frontend/index.html`：身份弹层改为登录/注册/账号面板；增加 `<script src="auth.js">`。
+- [ ] `frontend/styles.css`：表单与账号面板样式。
 - [ ] `scripts/stage.js:8`：`ENGINE_FILES` 加 `auth.js`。
-- [ ] `test/server_proxy.test.js:218` 引擎清单加 `auth.js`。
-- [ ] 测试：`test/auth.test.js`、`test/identity.test.js` 账号用例。
+- [ ] `tests/server_proxy.test.js:218` 引擎清单加 `auth.js`。
+- [ ] 测试：`tests/auth.test.js`、`tests/identity.test.js` 账号用例。
 - [ ] 验收：匿名可浏览/本地判分；登录后可同步；手机窄屏表单可用；登出/清除本机数据正常。
 
 ### P4：文档、部署、线上验证
@@ -757,18 +758,18 @@ cd .. && bun test
 
 | 测试文件 | 新增/修改 | 覆盖点 |
 |---|---|---|
-| `grade-svc/cmd/syncsvc/auth_test.go` | 新增 | 注册/登录/登出/me、重复邮箱、弱密码、限流、Cookie 属性 |
-| `grade-svc/cmd/syncsvc/authz_test.go` | 新增 | 无会话 401、slot 不匹配 403、`/internal/session` |
-| `grade-svc/cmd/syncsvc/store_test.go` | 改写 | Postgres 槽位隔离、合并、清空、非法码 400 |
-| `grade-svc/cmd/syncsvc/rows_test.go` | 改写 | 派生行重建、`/stats` 聚合 |
-| `grade-svc/auth_test.go` | 新增 | 判分中间件有效/无效/过期/服务不可达 |
-| `test/auth.test.js` | 新增 | `web/auth.js` 请求形状、错误码映射 |
-| `test/identity.test.js` | 扩展 | 账号优先、`setAccount/clearAccount/adoptAnonymous`；原匿名码用例保留 |
-| `test/sync.test.js` | 修改 | `prefetch` 登录门控、401 回调、URL 契约 |
-| `test/server_proxy.test.js` | 扩展 | Cookie/Set-Cookie 透传、`/api/auth/*`、引擎清单 |
-| `portal/test/portal.test.js` | 扩展 | `api/auth/*` 前缀转发、降级 |
-| `portal/test/store.test.js` | 改写 | 登录 Cookie、Postgres 测试库、跳过逻辑 |
-| `test/merge_xcheck.test.js` / `store_golden_test.go` | 不变 | 合并与载荷整形（与 DB 无关） |
+| `backend/grade-svc/cmd/syncsvc/auth_test.go` | 新增 | 注册/登录/登出/me、重复邮箱、弱密码、限流、Cookie 属性 |
+| `backend/grade-svc/cmd/syncsvc/authz_test.go` | 新增 | 无会话 401、slot 不匹配 403、`/internal/session` |
+| `backend/grade-svc/cmd/syncsvc/store_test.go` | 改写 | Postgres 槽位隔离、合并、清空、非法码 400 |
+| `backend/grade-svc/cmd/syncsvc/rows_test.go` | 改写 | 派生行重建、`/stats` 聚合 |
+| `backend/grade-svc/auth_test.go` | 新增 | 判分中间件有效/无效/过期/服务不可达 |
+| `tests/auth.test.js` | 新增 | `frontend/auth.js` 请求形状、错误码映射 |
+| `tests/identity.test.js` | 扩展 | 账号优先、`setAccount/clearAccount/adoptAnonymous`；原匿名码用例保留 |
+| `tests/sync.test.js` | 修改 | `prefetch` 登录门控、401 回调、URL 契约 |
+| `tests/server_proxy.test.js` | 扩展 | Cookie/Set-Cookie 透传、`/api/auth/*`、引擎清单 |
+| `backend/portal/test/portal.test.js` | 扩展 | `api/auth/*` 前缀转发、降级 |
+| `backend/portal/test/store.test.js` | 改写 | 登录 Cookie、Postgres 测试库、跳过逻辑 |
+| `tests/merge_xcheck.test.js` / `store_golden_test.go` | 不变 | 合并与载荷整形（与 DB 无关） |
 
 验收命令：
 
@@ -781,7 +782,7 @@ docker run --rm -d --name exam-pg-test \
 export TEST_DATABASE_URL='postgres://exam:exam@127.0.0.1:5432/exam_test?sslmode=disable'
 
 # 2. Go 单测
-cd grade-svc && go test ./...
+cd backend/grade-svc && go test ./...
 
 # 3. 前端/集成测试
 cd .. && bun test
@@ -841,11 +842,11 @@ docker compose -f build/docker-compose.yml up -d
 
 | 阶段 | 内容 | 关键文件 |
 |---|---|---|
-| P0 | SQLite → PostgreSQL；pgx + goose；`user_slot` 列；PUT 事务 + `FOR UPDATE`；compose 增加 postgres/pgdata；deploy 生成 `POSTGRES_PASSWORD` + 旧卷备份；测试改 `TEST_DATABASE_URL` | `grade-svc/cmd/syncsvc/db.go`、`migrations/0001_init.sql`、`store.go`、`rows.go`、`scripts/gen-compose.js`、`deploy.sh`、`scripts/test-pg.sh`、`portal/test/store.test.js` |
+| P0 | SQLite → PostgreSQL；pgx + goose；`user_slot` 列；PUT 事务 + `FOR UPDATE`；compose 增加 postgres/pgdata；deploy 生成 `POSTGRES_PASSWORD` + 旧卷备份；测试改 `TEST_DATABASE_URL` | `backend/grade-svc/cmd/syncsvc/db.go`、`migrations/0001_init.sql`、`store.go`、`rows.go`、`scripts/gen-compose.js`、`deploy.sh`、`scripts/test-pg.sh`、`backend/portal/test/store.test.js` |
 | P1 | 邮箱+密码注册/登录/登出/me；PBKDF2-SHA256 600k；会话表 + HttpOnly Cookie；注册开关/总量上限/限流；管理员重置密码 CLI | `migrations/0002_auth.sql`、`password.go`、`session.go`、`ratelimit.go`、`auth.go`、`main.go` |
-| P2 | `/store` 与 `/api/grade` 强制登录；账号 slot 一致性校验；判分服务内网会话校验 + 缓存 + 可选小时配额；门户/本地代理透传 Cookie 与 Set-Cookie；部署探活改为 401 | `cmd/syncsvc/main.go`、`grade-svc/auth.go`、`grade-svc/main.go`、`portal/portal.js`、`server.js`、`deploy.sh` |
-| P3 | 前端登录/注册弹层；启动先 `AUTH.me()`；未登录不同步；401 会话失效处理；登录时本机匿名/旧版分区并入账号；新脚本入 stage/测试清单 | `web/auth.js`、`web/identity.js`、`web/app.js`、`web/sync.js`、`web/index.html`、`web/styles.css`、`scripts/stage.js` |
-| P5（邮件） | 阿里云 DirectMail：注册验证邮件、验证邮箱、找回密码、重发验证；令牌单次使用（verify 24h / reset 30min）；`0003` 唯一索引；前端「忘记密码」与「设置新密码」视图、`?verify_token=` 自动验证 | `mailer.go`、`auth_mail.go`、`auth_mail_handlers.go`、`migrations/0003_email_tokens.sql`、`web/auth.js`、`web/app.js`、`web/index.html` |
+| P2 | `/store` 与 `/api/grade` 强制登录；账号 slot 一致性校验；判分服务内网会话校验 + 缓存 + 可选小时配额；门户/本地代理透传 Cookie 与 Set-Cookie；部署探活改为 401 | `cmd/syncsvc/main.go`、`backend/grade-svc/auth.go`、`backend/grade-svc/main.go`、`backend/portal/portal.js`、`server.js`、`deploy.sh` |
+| P3 | 前端登录/注册弹层；启动先 `AUTH.me()`；未登录不同步；401 会话失效处理；登录时本机匿名/旧版分区并入账号；新脚本入 stage/测试清单 | `frontend/auth.js`、`frontend/identity.js`、`frontend/app.js`、`frontend/sync.js`、`frontend/index.html`、`frontend/styles.css`、`scripts/stage.js` |
+| P5（邮件） | 阿里云 DirectMail：注册验证邮件、验证邮箱、找回密码、重发验证；令牌单次使用（verify 24h / reset 30min）；`0003` 唯一索引；前端「忘记密码」与「设置新密码」视图、`?verify_token=` 自动验证 | `mailer.go`、`auth_mail.go`、`auth_mail_handlers.go`、`migrations/0003_email_tokens.sql`、`frontend/auth.js`、`frontend/app.js`、`frontend/index.html` |
 
 ### B.2 与设计稿的差异
 
@@ -859,9 +860,9 @@ docker compose -f build/docker-compose.yml up -d
 
 ```bash
 # Go（测试 PostgreSQL 已起）
-cd grade-svc && TEST_DATABASE_URL='postgres://exam:exam@127.0.0.1:55432/exam_test?sslmode=disable' go test ./...
+cd backend/grade-svc && TEST_DATABASE_URL='postgres://exam:exam@127.0.0.1:55432/exam_test?sslmode=disable' go test ./...
 #   ok grade-svc
-#   ok grade-svc/cmd/syncsvc
+#   ok backend/grade-svc/cmd/syncsvc
 
 # 前端/集成
 TEST_DATABASE_URL='postgres://exam:exam@127.0.0.1:55432/exam_test?sslmode=disable' bun test

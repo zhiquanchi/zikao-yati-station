@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "全国自考押题多科目刷题站（单仓：共享引擎 web/grade-svc/portal + subjects/<科目> 目录，Bun 运行时）",
+  "description": "全国自考押题多科目刷题站（单仓：frontend/ 共享引擎 + backend 的 portal/grade-svc + subjects/<科目>，Bun 运行时）",
   "scripts": {
     "start": "bun server.js",
     "build": "bun scripts/build.js",

@@ -5,7 +5,7 @@ import { readdirSync, existsSync, readFileSync } from "node:fs";
 
 export const ROOT = path.join(import.meta.dir, "..");
 export const SUBJECTS_DIR = path.join(ROOT, "subjects");
-export const WEB_DIR = path.join(ROOT, "web");
+export const WEB_DIR = path.join(ROOT, "frontend");
 
 export function subjectDir(name) { return path.join(SUBJECTS_DIR, name); }
 

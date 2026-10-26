@@ -1,5 +1,5 @@
 // 前端产物暂存：bun run stage [科目…]（缺省＝全部）。
-// 把共享引擎 web/ 与科目产物合成为 build/stage/<prefix>/ —— 部署目录的唯一事实源是共享引擎，
+// 把共享引擎 frontend/ 与科目产物合成为 build/stage/<prefix>/ —— 部署目录的唯一事实源是共享引擎，
 // 这里只是按门户静态根的形态拼一次（deploy.sh 与本地 file:// 预览都吃这份暂存）。
 import path from "node:path";
 import { mkdirSync, rmSync, cpSync, existsSync, chmodSync, readdirSync } from "node:fs";
@@ -12,7 +12,7 @@ const ROOT_ = path.join(ROOT, "build", "stage");
 const names = process.argv.slice(2);
 const subs = names.length ? names.map((n) => findSubject(n)) : loadSubjects();
 
-if (!existsSync(path.join(WEB_DIR, "subjects.js"))) throw new Error("缺 web/subjects.js，请先 bun run build");
+if (!existsSync(path.join(WEB_DIR, "subjects.js"))) throw new Error("缺 frontend/subjects.js，请先 bun run build");
 
 for (const s of subs) {
   const dest = path.join(ROOT_, s.prefix);

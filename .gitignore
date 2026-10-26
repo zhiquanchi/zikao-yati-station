@@ -4,9 +4,9 @@ node_modules/
 build/
 .env
 .deploy.env
-grade-svc/grade-svc
-portal/test/.fixtures/*.db
-portal/test/.fixtures/*.db-shm
-portal/test/.fixtures/*.db-wal
-portal/test/.fixtures/syncsvc-bin
+backend/grade-svc/grade-svc
+backend/portal/test/.fixtures/*.db
+backend/portal/test/.fixtures/*.db-shm
+backend/portal/test/.fixtures/*.db-wal
+backend/portal/test/.fixtures/syncsvc-bin
 .zcode/

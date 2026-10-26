@@ -28,5 +28,5 @@ echo "🐘 测试库就绪：$TEST_DATABASE_URL"
 if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
-(cd grade-svc && go test ./...)
+(cd backend/grade-svc && go test ./...)
 bun test

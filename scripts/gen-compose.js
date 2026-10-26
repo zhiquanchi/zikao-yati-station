@@ -20,7 +20,7 @@ lines.push("name: exam-sites");
 lines.push("services:");
 lines.push("  portal:");
 if (mode === "--remote") lines.push("    image: exam-portal:latest");
-else lines.push("    build:\n      context: .\n      dockerfile: portal/Dockerfile");
+else lines.push("    build:\n      context: .\n      dockerfile: backend/portal/Dockerfile");
 lines.push('    ports:\n      - "127.0.0.1:8799:80" # 宿主 80 由 nginx 占用：门户绑回环 8799，nginx 按 Host=IP 转发各科目前缀');
 lines.push("    environment:");
 for (const s of subs) lines.push(`      GRADE_${up(s.prefix)}: http://grade-svc-${s.prefix}:8792/api/grade`);
@@ -47,7 +47,7 @@ lines.push("    # 有意不做端口映射：数据库只在编排内部网络�
 lines.push("    restart: unless-stopped");
 lines.push("  sync-svc:");
 if (mode === "--remote") lines.push("    image: exam-sync:latest");
-else lines.push("    build:\n      context: .\n      dockerfile: grade-svc/Dockerfile.sync");
+else lines.push("    build:\n      context: .\n      dockerfile: backend/grade-svc/Dockerfile.sync");
 lines.push("    environment:");
 lines.push("      DATABASE_URL: postgres://${POSTGRES_USER:-exam}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-exam}?sslmode=disable");
 lines.push("      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-1}");
@@ -73,7 +73,7 @@ lines.push("    restart: unless-stopped");
 for (const s of subs) {
   lines.push(`  grade-svc-${s.prefix}:`);
   if (mode === "--remote") lines.push(`    image: exam-grade-${s.prefix}:latest`);
-  else lines.push(`    build:\n      context: .\n      dockerfile: grade-svc/Dockerfile\n      args:\n        SUBJECT: ${s.slug}`);
+  else lines.push(`    build:\n      context: .\n      dockerfile: backend/grade-svc/Dockerfile\n      args:\n        SUBJECT: ${s.slug}`);
   lines.push("    environment:\n      QWEN_API_KEY: ${QWEN_API_KEY:-}\n      QWEN_MODEL: ${QWEN_MODEL:-qwen3.8-flash}\n      AUTH_VERIFY_URL: http://sync-svc:8793/internal/session\n      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}\n      GRADE_HOURLY_LIMIT: ${GRADE_HOURLY_LIMIT:-0}");
   lines.push("    depends_on:\n      - sync-svc");
   lines.push("    # 有意不做端口映射：密钥与判分服务只存在于编排内部网络，只有门户容器可达");
