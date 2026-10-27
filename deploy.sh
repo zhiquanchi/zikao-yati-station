@@ -102,10 +102,9 @@ EOF
     cat >> "$TMP" <<EOF
 
     location /$pre/ {
-        rewrite ^/$pre/(.*)\$ /\$1 break;
-        root $REMOTE_DIR/web;
+        alias $REMOTE_DIR/web/;
         index index.html;
-        try_files \$uri \$uri/ /index.html;
+        try_files \$uri \$uri/ /$pre/index.html;
     }
 EOF
   done
@@ -125,8 +124,12 @@ fi
 
 # —— 6. 探活 ——
 for pre in "${PREFIXES[@]}"; do
-  curl -fsS -o /dev/null -w "探活 /$pre/ → HTTP %{http_code}\n" --max-time 15 --retry 3 --retry-delay 2 --retry-all-errors "http://$IP/$pre/" || \
-    echo "⚠ 访问 /$pre/ 失败：检查安全组 80 与 nginx"
+  PAGE=$(curl -fsS --max-time 15 --retry 3 --retry-delay 2 --retry-all-errors "http://$IP/$pre/" || true)
+  if printf '%s' "$PAGE" | grep -q 'api.js'; then
+    echo "探活 /$pre/ → 应用页面正常"
+  else
+    echo "❌ /$pre/ 未返回应用页面（nginx 兜底可能落到了默认站点）"; exit 1
+  fi
 done
 SUB_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://$IP/api/v1/subjects" || true)
 [ "$SUB_CODE" = "200" ] || { echo "❌ /api/v1/subjects 应为 200，实得 ${SUB_CODE:-无响应}"; exit 1; }
