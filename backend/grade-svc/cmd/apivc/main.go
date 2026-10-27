@@ -21,6 +21,7 @@ import (
 	"grade-svc/internal/gradeai"
 	"grade-svc/internal/httpapi"
 	"grade-svc/internal/progress"
+	"grade-svc/internal/quota"
 	"grade-svc/internal/store"
 	"grade-svc/internal/subject"
 )
@@ -76,7 +77,7 @@ func main() {
 	apiKey := os.Getenv("QWEN_API_KEY")
 	baseURL := os.Getenv("QWEN_BASE_URL")
 	model := os.Getenv("QWEN_MODEL")
-	ai := make(map[string]*gradeai.Client, len(reg.List()))
+	ai := make(map[string]progress.AIClient, len(reg.List()))
 	for _, c := range reg.List() {
 		ai[c.Prefix] = gradeai.New(apiKey, baseURL, model, gradeai.Subject{
 			Name: c.Name, Code: c.Code, MaterialTitle: c.Material, Reference: c.Reference,
@@ -84,7 +85,13 @@ func main() {
 	}
 
 	authSvc := auth.New(db)
-	progSvc := &progress.Service{DB: db, Reg: reg, AI: ai}
+	q := quota.NewFromEnv()
+	if q.Enabled() {
+		log.Printf("⏱ AI 配额：每账号每小时 %d 次（游客同样计入）", q.Limit())
+	} else {
+		log.Printf("⚠ 未设置 GRADE_HOURLY_LIMIT：AI 判分与逐项解析不限次数（成本敞口）")
+	}
+	progSvc := &progress.Service{DB: db, Reg: reg, AI: ai, Quota: q}
 	srv := httpapi.New(db, authSvc, progSvc, reg, ai)
 
 	go func() {
@@ -94,6 +101,11 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := authSvc.CleanupExpiredSessions(ctx); err != nil {
 				log.Printf("清理过期会话失败：%v", err)
+			}
+			if n, err := authSvc.CleanupGuests(ctx, time.Now().Add(-7*24*time.Hour)); err != nil {
+				log.Printf("清理游客失败：%v", err)
+			} else if n > 0 {
+				log.Printf("已清理 %d 个长期无会话的游客账号", n)
 			}
 			cancel()
 		}

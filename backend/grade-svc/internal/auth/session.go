@@ -155,3 +155,19 @@ func (s *Service) CleanupExpiredSessions(ctx context.Context) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= $1`, time.Now().UnixMilli())
 	return err
 }
+
+// CleanupGuests 删除长期无有效会话的游客账号（默认 7 天前创建）。
+func (s *Service) CleanupGuests(ctx context.Context, olderThan time.Time) (int64, error) {
+	ctx, cancel := withTimeout(ctx)
+	defer cancel()
+	res, err := s.DB.ExecContext(ctx, `
+		DELETE FROM users u
+		 WHERE u.is_guest = true
+		   AND u.created_at < $1
+		   AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.expires_at > $2)`,
+		olderThan.UnixMilli(), time.Now().UnixMilli())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

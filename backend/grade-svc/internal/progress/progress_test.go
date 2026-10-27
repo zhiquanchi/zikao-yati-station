@@ -251,3 +251,51 @@ func TestReciteAndMemo(t *testing.T) {
 		t.Fatalf("未作答时全部考点应未掌握：pending=%d sections=%d", memo.Counts.Pending, memo.Counts.Sections)
 	}
 }
+
+func TestClearThenSubmitUsesNewerTS(t *testing.T) {
+	svc := testService(t)
+	cfg := svc.Reg.Get("os")
+	q := &cfg.Questions[0]
+	ctx := context.Background()
+	if err := svc.Clear(ctx, "os", "tsuser"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := svc.Load(ctx, "os", "tsuser")
+	cleared := st.ClearedAt
+	u, _ := json.Marshal("A")
+	if _, err := svc.Submit(ctx, "os", "tsuser", SubmitReq{QID: q.ID, U: u, Mode: "submit"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = svc.Load(ctx, "os", "tsuser")
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(st.Records[q.ID], &m)
+	var ts int64
+	_ = json.Unmarshal(m["ts"], &ts)
+	if ts <= cleared {
+		t.Fatalf("清空后提交的 ts=%d 应晚于 cleared_at=%d", ts, cleared)
+	}
+}
+
+func TestConcurrentBuildPaper(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := svc.BuildPaper(ctx, "os", "concurrent", PaperReq{})
+			errs <- err
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("并发组卷失败：%v", err)
+		}
+	}
+	st, err := svc.Load(ctx, "os", "concurrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Paper == nil {
+		t.Fatal("并发组卷后应有卷面")
+	}
+}

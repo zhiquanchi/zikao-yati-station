@@ -88,8 +88,11 @@ func MigrateV1(ctx context.Context, db *sql.DB, reg *subject.Registry, dryRun bo
 
 		for id, raw := range blob.Store {
 			var qid int
-			if _, err := fmt.Sscanf(id, "%d", &qid); err != nil {
+			if _, err := fmt.Sscanf(id, "%d", &qid); err != nil || qid <= 0 {
 				continue
+			}
+			if cfg == nil || cfg.Question(qid) == nil {
+				continue // 题库已不存在的题号丢弃
 			}
 			var rec map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &rec); err != nil {
@@ -177,25 +180,7 @@ func MigrateV1(ctx context.Context, db *sql.DB, reg *subject.Registry, dryRun bo
 				return rep, err
 			}
 		}
-		// AI 解析缓存（与用户无关）：按题保留最新一份
-		for id, raw := range blob.Expl {
-			var qid int
-			if _, err := fmt.Sscanf(id, "%d", &qid); err != nil {
-				continue
-			}
-			var vm map[string]json.RawMessage
-			if json.Unmarshal(raw, &vm) != nil || isNull(vm["items"]) {
-				continue
-			}
-			if !dryRun {
-				if _, err := tx.ExecContext(ctx, `
-					INSERT INTO explain_cache (subject,qid,hash,payload,ts) VALUES ($1,$2,'v1',$3,$4)
-					ON CONFLICT (subject,qid,hash) DO UPDATE SET payload = excluded.payload, ts = excluded.ts`,
-					r.subject, qid, string(raw), int64(numRaw(vm["ts"]))); err != nil {
-					return rep, err
-				}
-			}
-		}
+		// 旧解析缓存不迁移：由服务端按当前 prompt 重新生成。
 	}
 
 	if !dryRun {

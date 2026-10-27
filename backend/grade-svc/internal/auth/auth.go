@@ -108,16 +108,20 @@ func normalizeEmail(raw string) (string, bool) {
 }
 
 func clientIP(r *http.Request) string {
+	// 只信任 nginx 覆盖写入的单一来源 IP（deploy.sh 用 $remote_addr 覆盖 XFF）；
+	// 多值/非法值一律回落 RemoteAddr，避免伪造头绕过限流。
 	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 		if i := strings.IndexByte(xff, ','); i >= 0 {
 			xff = xff[:i]
 		}
-		if ip := strings.TrimSpace(xff); ip != "" {
+		if ip := strings.TrimSpace(xff); net.ParseIP(ip) != nil {
 			return ip
 		}
 	}
 	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
-		return xr
+		if net.ParseIP(xr) != nil {
+			return xr
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
@@ -125,7 +129,17 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func sameOrigin(r *http.Request) bool {
+// maxGuests：游客账号总量上限（MAX_GUESTS，0＝不限）。
+func maxGuests() int {
+	if v := strings.TrimSpace(os.Getenv("MAX_GUESTS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 200
+}
+
+func SameOrigin(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		return true
@@ -203,7 +217,7 @@ func (s *Service) currentUser(r *http.Request) *User {
 
 // POST /api/v1/auth/guest：无会话时签发游客；已有会话直接返回。
 func (s *Service) HandleGuest(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -217,6 +231,17 @@ func (s *Service) HandleGuest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := withTimeout(r.Context())
 	defer cancel()
+	if cap := maxGuests(); cap > 0 {
+		var guests int
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE is_guest=true`).Scan(&guests); err != nil {
+			writeErr(w, 500, "internal")
+			return
+		}
+		if guests >= cap {
+			writeErr(w, 429, "too_many_attempts")
+			return
+		}
+	}
 	slot, err := s.newSlot(ctx)
 	if err != nil {
 		writeErr(w, 500, "internal")
@@ -242,7 +267,7 @@ func (s *Service) HandleGuest(w http.ResponseWriter, r *http.Request) {
 // ——— 注册 / 登录 ———
 
 func (s *Service) HandleRegister(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -320,7 +345,7 @@ func (s *Service) HandleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -387,7 +412,7 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -407,7 +432,7 @@ func (s *Service) HandleMe(w http.ResponseWriter, r *http.Request) {
 
 // HandleClaim 显式并入游客进度（客户端在迁移旧本机数据后调用）。
 func (s *Service) HandleClaim(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -489,7 +514,7 @@ func (s *Service) claimSlot(ctx context.Context, from, to string, guestID int64)
 // ——— 邮件流程 ———
 
 func (s *Service) HandleVerifyEmail(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -524,7 +549,7 @@ func (s *Service) HandleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) HandleRequestReset(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -557,7 +582,7 @@ func (s *Service) HandleRequestReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}
@@ -609,7 +634,7 @@ func (s *Service) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) HandleResendVerify(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !SameOrigin(r) {
 		writeErr(w, 403, "bad_origin")
 		return
 	}

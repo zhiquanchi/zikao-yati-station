@@ -30,8 +30,12 @@ func ImportBlob(ctx context.Context, db *sql.DB, reg *subject.Registry, prefix, 
 	n := 0
 	for id, recRaw := range blob.Store {
 		var qid int
-		if _, err := fmt.Sscanf(id, "%d", &qid); err != nil {
+		if _, err := fmt.Sscanf(id, "%d", &qid); err != nil || qid <= 0 {
 			continue
+		}
+		q := cfg.Question(qid)
+		if q == nil {
+			continue // 未知题号一律丢弃，避免写入任意行
 		}
 		var rec map[string]json.RawMessage
 		if err := json.Unmarshal(recRaw, &rec); err != nil {
@@ -40,10 +44,8 @@ func ImportBlob(ctx context.Context, db *sql.DB, reg *subject.Registry, prefix, 
 		if u, ok := rec["u"]; !ok || isNull(u) {
 			continue
 		}
-		if q := cfg.Question(qid); q != nil {
-			if s, ok := rescore(q, rec["u"]); ok {
-				rec["s"] = jsonNumber(s)
-			}
+		if s, ok := rescore(q, rec["u"]); ok {
+			rec["s"] = jsonNumber(s)
 		}
 		out, err := json.Marshal(rec)
 		if err != nil {
@@ -104,22 +106,6 @@ func ImportBlob(ctx context.Context, db *sql.DB, reg *subject.Registry, prefix, 
 			return n, err
 		}
 	}
-	// AI 解析缓存随旧数据一起迁移（按题保留最新）
-	for id, raw := range blob.Expl {
-		var qid int
-		if _, err := fmt.Sscanf(id, "%d", &qid); err != nil {
-			continue
-		}
-		var vm map[string]json.RawMessage
-		if json.Unmarshal(raw, &vm) != nil || isNull(vm["items"]) {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO explain_cache (subject,qid,hash,payload,ts) VALUES ($1,$2,'v1',$3,$4)
-			ON CONFLICT (subject,qid,hash) DO UPDATE SET payload=excluded.payload, ts=excluded.ts`,
-			prefix, qid, string(raw), int64(numRaw(vm["ts"]))); err != nil {
-			return n, err
-		}
-	}
+	// 注意：旧 blob 的 expl 段不再导入——解析缓存由服务端重新生成，避免旧形状污染全局缓存。
 	return n, tx.Commit()
 }

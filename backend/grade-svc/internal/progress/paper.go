@@ -41,11 +41,20 @@ func (s *Service) BuildPaper(ctx context.Context, prefix, slot string, req Paper
 	if cfg == nil {
 		return nil, ErrNotFound
 	}
-	records, err := loadRecs(ctx, s.DB, prefix, slot)
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	seen, err := loadSeen(ctx, s.DB, prefix, slot)
+	defer tx.Rollback()
+	// 同一槽位的组卷/提交/清空串行：避免并发组卷互相清记录或死锁
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return nil, err
+	}
+	records, err := loadRecs(ctx, tx, prefix, slot)
+	if err != nil {
+		return nil, err
+	}
+	seen, err := loadSeen(ctx, tx, prefix, slot)
 	if err != nil {
 		return nil, err
 	}
@@ -93,11 +102,6 @@ func (s *Service) BuildPaper(ctx context.Context, prefix, slot string, req Paper
 	}
 	paper := &Paper{Seed: seed, Order: sortedIDs, Picked: picked, Total: total, TS: time.Now().UnixMilli()}
 
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 	// 卷内旧记录：判过分的先归档，再看是否保留「看过解析」标记
 	for _, id := range picked {
 		raw, ok, err := lockRecord(ctx, tx, prefix, slot, id)
@@ -146,8 +150,18 @@ func (s *Service) ClearPaper(ctx context.Context, prefix, slot string) error {
 	if s.Reg.Get(prefix) == nil {
 		return ErrNotFound
 	}
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM papers WHERE subject=$1 AND user_slot=$2`, prefix, slot)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM papers WHERE subject=$1 AND user_slot=$2`, prefix, slot); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func filterPool(cfg *subject.Config, records map[int]json.RawMessage, req PaperReq) []*subject.Question {
@@ -230,7 +244,11 @@ func statusWeight(id int, records map[int]json.RawMessage, seen map[int]int64) f
 	return 1
 }
 
-func loadRecs(ctx context.Context, db *sql.DB, prefix, slot string) (map[int]json.RawMessage, error) {
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func loadRecs(ctx context.Context, db querier, prefix, slot string) (map[int]json.RawMessage, error) {
 	out := map[int]json.RawMessage{}
 	rows, err := db.QueryContext(ctx, `SELECT qid, rec FROM progress WHERE subject=$1 AND user_slot=$2`, prefix, slot)
 	if err != nil {
@@ -248,7 +266,7 @@ func loadRecs(ctx context.Context, db *sql.DB, prefix, slot string) (map[int]jso
 	return out, rows.Err()
 }
 
-func loadSeen(ctx context.Context, db *sql.DB, prefix, slot string) (map[int]int64, error) {
+func loadSeen(ctx context.Context, db querier, prefix, slot string) (map[int]int64, error) {
 	out := map[int]int64{}
 	rows, err := db.QueryContext(ctx, `SELECT qid, seen_at FROM seen WHERE subject=$1 AND user_slot=$2`, prefix, slot)
 	if err != nil {

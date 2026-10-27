@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -165,5 +166,79 @@ func TestExplicitClaim(t *testing.T) {
 	_ = svc.DB.QueryRow(`SELECT COUNT(*) FROM progress WHERE user_slot=$1 AND qid=2`, r.User.Slot).Scan(&n)
 	if n != 1 {
 		t.Fatalf("claim 未并入：%d", n)
+	}
+}
+
+func TestLogoutAndMe(t *testing.T) {
+	svc := testService(t)
+	rec := doJSON(t, svc.HandleRegister, "POST", "/api/v1/auth/register",
+		map[string]any{"email": "c@example.com", "password": "password123"}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("register: %d", rec.Code)
+	}
+	cookies := rec.Result().Cookies()
+	if rec := doJSON(t, svc.HandleMe, "GET", "/api/v1/auth/me", nil, cookies); rec.Code != 200 {
+		t.Fatalf("me: %d", rec.Code)
+	}
+	if rec := doJSON(t, svc.HandleLogout, "POST", "/api/v1/auth/logout", map[string]any{}, cookies); rec.Code != 204 {
+		t.Fatalf("logout: %d", rec.Code)
+	}
+	if rec := doJSON(t, svc.HandleMe, "GET", "/api/v1/auth/me", nil, cookies); rec.Code != 401 {
+		t.Fatalf("logout 后 me 应 401，实得 %d", rec.Code)
+	}
+}
+
+func TestVerifyTokenSingleUse(t *testing.T) {
+	svc := testService(t)
+	rec := doJSON(t, svc.HandleRegister, "POST", "/api/v1/auth/register",
+		map[string]any{"email": "d@example.com", "password": "password123"}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("register: %d", rec.Code)
+	}
+	var id int64
+	if err := svc.DB.QueryRow(`SELECT id FROM users WHERE email='d@example.com'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.issueEmailToken(context.Background(), id, tokenPurposeVerify, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := doJSON(t, svc.HandleVerifyEmail, "POST", "/api/v1/auth/verify-email", map[string]any{"token": token}, nil); rec.Code != 200 {
+		t.Fatalf("首次验证: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(t, svc.HandleVerifyEmail, "POST", "/api/v1/auth/verify-email", map[string]any{"token": token}, nil); rec.Code != 400 {
+		t.Fatalf("令牌应单次有效，第二次实得 %d", rec.Code)
+	}
+}
+
+func TestRegisterRejectsCrossOrigin(t *testing.T) {
+	svc := testService(t)
+	var buf bytes.Buffer
+	_ = json.NewEncoder(&buf).Encode(map[string]any{"email": "e@example.com", "password": "password123"})
+	req := httptest.NewRequest("POST", "/api/v1/auth/register", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	svc.HandleRegister(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("跨源注册应 403，实得 %d", rec.Code)
+	}
+}
+
+func TestClientIPTrust(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "192.0.2.9:1234"
+	r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if got := clientIP(r); got != "203.0.113.7" {
+		t.Fatalf("合法 XFF 应被采用，实得 %s", got)
+	}
+	r.Header.Set("X-Forwarded-For", "not-an-ip")
+	if got := clientIP(r); got != "192.0.2.9" {
+		t.Fatalf("非法 XFF 应回落 RemoteAddr，实得 %s", got)
+	}
+	r.Header.Del("X-Forwarded-For")
+	r.Header.Set("X-Real-IP", "198.51.100.2")
+	if got := clientIP(r); got != "198.51.100.2" {
+		t.Fatalf("合法 X-Real-IP 应采用，实得 %s", got)
 	}
 }

@@ -7,11 +7,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
+	"reflect"
 	"strings"
 	"time"
 
 	"grade-svc/internal/gradeai"
 	"grade-svc/internal/grading"
+	"grade-svc/internal/quota"
 	"grade-svc/internal/subject"
 )
 
@@ -26,12 +29,21 @@ var (
 	ErrBadInput = errors.New("bad_input")
 	ErrNoAI     = errors.New("ai_unavailable")
 	ErrAIFailed = errors.New("ai_failed")
+	ErrQuota    = errors.New("quota_exceeded")
 )
 
+// AIClient 是判分/解析上游的最小接口（*gradeai.Client 实现；测试可注入假实现）。
+type AIClient interface {
+	Enabled() bool
+	Grade(ctx context.Context, r gradeai.Req) (*gradeai.Resp, error)
+	Explain(ctx context.Context, r gradeai.ExplainReq) (*gradeai.ExplainResp, error)
+}
+
 type Service struct {
-	DB  *sql.DB
-	Reg *subject.Registry
-	AI  map[string]*gradeai.Client // prefix → 已绑定科目 prompt/资料的判分客户端
+	DB    *sql.DB
+	Reg   *subject.Registry
+	AI    map[string]AIClient // prefix → 已绑定科目 prompt/资料的判分客户端
+	Quota *quota.Limiter      // AI 调用小时配额（游客同样计入）
 }
 
 type Record struct {
@@ -151,6 +163,13 @@ func (s *Service) Submit(ctx context.Context, prefix, slot string, req SubmitReq
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return nil, err
+	}
+	cleared, err := clearedAtTx(ctx, tx, prefix, slot)
+	if err != nil {
+		return nil, err
+	}
 
 	prevRaw, hasPrev, err := lockRecord(ctx, tx, prefix, slot, q.ID)
 	if err != nil {
@@ -162,7 +181,7 @@ func (s *Service) Submit(ctx context.Context, prefix, slot string, req SubmitReq
 		if hasPrev {
 			prevV = recViewed(prevRaw)
 		}
-		rec := buildRecord(req.U, local.Score, localDetail(local), prevV)
+		rec := buildRecord(req.U, local.Score, localDetail(local), prevV, nextTS(cleared))
 		if err := upsertRecord(ctx, tx, prefix, slot, q.ID, rec); err != nil {
 			return nil, err
 		}
@@ -182,10 +201,6 @@ func (s *Service) Submit(ctx context.Context, prefix, slot string, req SubmitReq
 }
 
 func (s *Service) submitAI(ctx context.Context, prefix, slot string, cfg *subject.Config, q *subject.Question, u json.RawMessage) (*SubmitResult, error) {
-	client := s.AI[prefix]
-	if client == nil || !client.Enabled() {
-		return nil, ErrNoAI
-	}
 	if q.Type != "essay" {
 		return nil, ErrBadInput
 	}
@@ -193,30 +208,54 @@ func (s *Service) submitAI(ctx context.Context, prefix, slot string, cfg *subjec
 	if strings.TrimSpace(answer) == "" {
 		return nil, ErrBadInput
 	}
+	// 已有 AI 分：不再调用上游（改一个字也不重复计费）
+	if prev, ok := s.getRecord(ctx, prefix, slot, q.ID); ok && aiEngine(prev) == "ai" && sameU(prev, u) {
+		score, per, _ := recordAIDetail(prev)
+		return &SubmitResult{Score: score, Engine: "ai", Per: per, Practice: true, AIAvail: true}, nil
+	}
+	client := s.AI[prefix]
+	if client == nil || !client.Enabled() {
+		return nil, ErrNoAI
+	}
+	if !s.Quota.Allow(slot) {
+		return nil, ErrQuota
+	}
+
+	start := time.Now()
 	ai, err := client.Grade(ctx, gradeai.Req{Stem: q.Stem, Ref: q.Ref, Points: q.Points, Answer: answer})
 	if err != nil {
-		return nil, &gradeai.Err{Status: 502, Code: "upstream", Detail: err.Error()}
+		log.Printf("ai grade 失败 subject=%s qid=%d slot=%s took=%s err=%v", prefix, q.ID, slot, time.Since(start).Round(time.Millisecond), err)
+		return nil, err
 	}
+	log.Printf("ai grade 完成 subject=%s qid=%d slot=%s took=%s score=%d", prefix, q.ID, slot, time.Since(start).Round(time.Millisecond), ai.Score)
+
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return nil, err
+	}
+	cleared, err := clearedAtTx(ctx, tx, prefix, slot)
+	if err != nil {
+		return nil, err
+	}
 	prevRaw, hasPrev, err := lockRecord(ctx, tx, prefix, slot, q.ID)
 	if err != nil {
 		return nil, err
 	}
-	if hasPrev && aiEngine(prevRaw) == "ai" {
-		// 首次分已是 AI：再调只做展示
-		out, _ := json.Marshal(gradeai.Resp{Engine: ai.Engine, Score: ai.Score, Summary: ai.Summary, Per: ai.Per})
-		return &SubmitResult{Score: ai.Score, Engine: "ai", Per: perAny(ai.Per), Practice: true, AIAvail: true, Record: out}, nil
+	if hasPrev && aiEngine(prevRaw) == "ai" && sameU(prevRaw, u) {
+		// 并发下已被另一请求写入同一作答的 AI 分：只回显，不覆盖、不返回 record
+		score, per, _ := recordAIDetail(prevRaw)
+		return &SubmitResult{Score: score, Engine: "ai", Per: per, Practice: true, AIAvail: true}, nil
 	}
 	prevV := int64(0)
 	if hasPrev {
 		prevV = recViewed(prevRaw)
 	}
 	g, _ := json.Marshal(gradeai.Resp{Engine: ai.Engine, Score: ai.Score, Summary: ai.Summary, Per: ai.Per, Cached: ai.Cached})
-	rec := buildRecord(u, ai.Score, g, prevV)
+	rec := buildRecord(u, ai.Score, g, prevV, nextTS(cleared))
 	if err := upsertRecord(ctx, tx, prefix, slot, q.ID, rec); err != nil {
 		return nil, err
 	}
@@ -232,7 +271,8 @@ func (s *Service) submitAI(ctx context.Context, prefix, slot string, cfg *subjec
 
 // Redo 重做：先归档（有分才归档），再删记录；看过解析标记保留在 seen 上。
 func (s *Service) Redo(ctx context.Context, prefix, slot string, qid int) error {
-	if s.Reg.Get(prefix) == nil {
+	cfg := s.Reg.Get(prefix)
+	if cfg == nil || cfg.Question(qid) == nil {
 		return ErrNotFound
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -240,6 +280,9 @@ func (s *Service) Redo(ctx context.Context, prefix, slot string, qid int) error 
 		return err
 	}
 	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return err
+	}
 	rec, ok, err := lockRecord(ctx, tx, prefix, slot, qid)
 	if err != nil {
 		return err
@@ -270,6 +313,9 @@ func (s *Service) Clear(ctx context.Context, prefix, slot string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return err
+	}
 	for _, q := range []string{
 		`DELETE FROM progress WHERE subject=$1 AND user_slot=$2`,
 		`DELETE FROM histories WHERE subject=$1 AND user_slot=$2`,
@@ -294,14 +340,28 @@ func (s *Service) MarkViewed(ctx context.Context, prefix, slot string, qid int) 
 	if cfg == nil || cfg.Question(qid) == nil {
 		return ErrNotFound
 	}
-	now := time.Now().UnixMilli()
-	_, err := s.DB.ExecContext(ctx, `
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return err
+	}
+	cleared, err := clearedAtTx(ctx, tx, prefix, slot)
+	if err != nil {
+		return err
+	}
+	now := nextTS(cleared)
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO progress (subject,user_slot,qid,rec,ts)
 		VALUES ($1,$2,$3,jsonb_build_object('u',NULL,'s',NULL,'ts',($4::bigint),'v',($4::bigint)),$4)
 		ON CONFLICT (subject,user_slot,qid)
 		DO UPDATE SET rec = progress.rec || jsonb_build_object('v',($4::bigint))`,
-		prefix, slot, qid, now)
-	return err
+		prefix, slot, qid, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // MarkSeen 批量标记「出现过」（只记首次时间；背答案模式由前端不调用）。
@@ -315,6 +375,9 @@ func (s *Service) MarkSeen(ctx context.Context, prefix, slot string, qids []int)
 		return err
 	}
 	defer tx.Rollback()
+	if err := lockSlotTx(ctx, tx, prefix, slot); err != nil {
+		return err
+	}
 	valid := make([]int, 0, len(qids))
 	for _, id := range qids {
 		if cfg.Question(id) != nil {
@@ -402,9 +465,9 @@ func upsertRecord(ctx context.Context, tx *sql.Tx, prefix, slot string, qid int,
 	return err
 }
 
-func buildRecord(u json.RawMessage, score int, g json.RawMessage, v int64) Record {
+func buildRecord(u json.RawMessage, score int, g json.RawMessage, v, ts int64) Record {
 	sc := score
-	return Record{U: u, S: &sc, G: g, TS: time.Now().UnixMilli(), V: v}
+	return Record{U: u, S: &sc, G: g, TS: ts, V: v}
 }
 
 // localDetail 把本机判分明细随记录落库：刷新/换设备时无需重算即可还原结果区。
@@ -498,6 +561,77 @@ func num(r json.RawMessage) float64 {
 }
 
 func scoreOf(rec json.RawMessage) *int { return recScore(rec) }
+
+// ——— 槽位串行与时间戳 ———
+
+// lockSlotTx 对 (科目, 槽位) 取事务级 advisory lock：组卷、首次评分、重做、清空互相串行，
+// 避免并发读写交错与死锁（锁在事务结束时自动释放）。
+func lockSlotTx(ctx context.Context, tx *sql.Tx, prefix, slot string) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, prefix+"/"+slot)
+	return err
+}
+
+func clearedAtTx(ctx context.Context, tx *sql.Tx, prefix, slot string) (int64, error) {
+	var v int64
+	err := tx.QueryRowContext(ctx, `SELECT cleared_at FROM cleared WHERE subject=$1 AND user_slot=$2`, prefix, slot).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return v, err
+}
+
+// nextTS：写入时间必须晚于 cleared_at，保证「清空后提交」不会被旧时间戳压掉。
+func nextTS(cleared int64) int64 {
+	now := time.Now().UnixMilli()
+	if now <= cleared {
+		return cleared + 1
+	}
+	return now
+}
+
+func (s *Service) getRecord(ctx context.Context, prefix, slot string, qid int) (json.RawMessage, bool) {
+	var raw []byte
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT rec FROM progress WHERE subject=$1 AND user_slot=$2 AND qid=$3`, prefix, slot, qid).Scan(&raw)
+	if err != nil || len(raw) == 0 {
+		return nil, false
+	}
+	return json.RawMessage(raw), true
+}
+
+func recU(rec json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(rec, &m) != nil {
+		return nil
+	}
+	return m["u"]
+}
+
+func sameU(rec json.RawMessage, u json.RawMessage) bool {
+	return sameJSON(recU(rec), u)
+}
+
+func sameJSON(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+func recordAIDetail(rec json.RawMessage) (int, []any, string) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(rec, &m) != nil {
+		return 0, nil, ""
+	}
+	var g struct {
+		Score   int                `json:"score"`
+		Summary string             `json:"summary"`
+		Per     []gradeai.PerPoint `json:"per"`
+	}
+	_ = json.Unmarshal(m["g"], &g)
+	return g.Score, perAny(g.Per), g.Summary
+}
 
 func perAny(in []gradeai.PerPoint) []any {
 	out := make([]any, len(in))

@@ -4,12 +4,18 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"grade-svc/internal/auth"
@@ -20,15 +26,21 @@ import (
 )
 
 type Server struct {
-	DB   *sql.DB
-	Auth *auth.Service
-	Prog *progress.Service
-	Reg  *subject.Registry
-	AI   map[string]*gradeai.Client
+	DB                *sql.DB
+	Auth              *auth.Service
+	Prog              *progress.Service
+	Reg               *subject.Registry
+	AI                map[string]progress.AIClient
+	AllowLegacyImport bool // ALLOW_LEGACY_IMPORT；默认关闭，端点下一次发布删除
 }
 
-func New(db *sql.DB, a *auth.Service, p *progress.Service, reg *subject.Registry, ai map[string]*gradeai.Client) *Server {
-	return &Server{DB: db, Auth: a, Prog: p, Reg: reg, AI: ai}
+func New(db *sql.DB, a *auth.Service, p *progress.Service, reg *subject.Registry, ai map[string]progress.AIClient) *Server {
+	allow := false
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ALLOW_LEGACY_IMPORT"))) {
+	case "1", "true", "yes":
+		allow = true
+	}
+	return &Server{DB: db, Auth: a, Prog: p, Reg: reg, AI: ai, AllowLegacyImport: allow}
 }
 
 func (s *Server) Mux() http.Handler {
@@ -61,18 +73,81 @@ func (s *Server) Mux() http.Handler {
 	mux.HandleFunc("GET /api/v1/subjects/{prefix}/stats", s.requireUser(s.getStats))
 	mux.HandleFunc("GET /api/v1/subjects/{prefix}/recite", s.requireUser(s.getRecite))
 	mux.HandleFunc("GET /api/v1/subjects/{prefix}/memo", s.requireUser(s.getMemo))
-	mux.HandleFunc("POST /api/v1/migrate", s.requireUser(s.migrate))
-	return mux
+	if s.AllowLegacyImport {
+		mux.HandleFunc("POST /api/v1/migrate", s.requireUser(s.migrate))
+	}
+	return s.middleware(mux)
 }
 
-// ——— 中间件 ———
+// ——— 顶层中间件：panic 兜底 + 访问日志 ———
+
+var reqSeq uint64
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = 200
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += n
+	return n, err
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (s *Server) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rid := fmt.Sprintf("%d-%d", start.UnixNano(), atomic.AddUint64(&reqSeq, 1))
+		sw := &statusWriter{ResponseWriter: w}
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("panic req=%s path=%s err=%v", rid, r.URL.Path, rec)
+				if sw.status == 0 {
+					writeErr(sw, 500, "internal")
+				}
+			}
+			if sw.status == 0 {
+				sw.status = 200
+			}
+			log.Printf("%s %s %d %dB %s req=%s", r.Method, r.URL.Path, sw.status, sw.bytes,
+				time.Since(start).Round(time.Millisecond), rid)
+		}()
+		next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), reqIDKey, rid)))
+	})
+}
 
 type ctxKey int
 
-const userKey ctxKey = 1
+const (
+	userKey ctxKey = iota + 1
+	reqIDKey
+)
+
+// ——— 身份中间件 ———
 
 func (s *Server) requireUser(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && !auth.SameOrigin(r) {
+			writeErr(w, 403, "bad_origin")
+			return
+		}
 		u, err := s.Auth.Lookup(r.Context(), r)
 		if err != nil {
 			writeErr(w, 401, "unauthorized")
@@ -103,7 +178,18 @@ func (s *Server) cfg(w http.ResponseWriter, r *http.Request) *subject.Config {
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	out := map[string]any{"ok": true, "service": "apivc", "subjects": len(s.Reg.List())}
+	subs := make([]map[string]any, 0, len(s.Reg.List()))
+	for _, c := range s.Reg.List() {
+		subs = append(subs, map[string]any{"prefix": c.Prefix, "questions": len(c.Questions)})
+	}
+	aiOn := false
+	for _, c := range s.AI {
+		if c != nil && c.Enabled() {
+			aiOn = true
+			break
+		}
+	}
+	out := map[string]any{"ok": true, "service": "apivc", "subjects": len(s.Reg.List()), "subject_list": subs, "ai": aiOn}
 	if err := s.DB.PingContext(ctx); err != nil {
 		out["ok"] = false
 		out["error"] = "db_unavailable"
@@ -172,7 +258,7 @@ func (s *Server) submitAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req progress.SubmitReq
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, 256<<10) {
 		return
 	}
 	out, err := s.Prog.Submit(r.Context(), cfg.Prefix, userOf(r).Slot, req)
@@ -188,8 +274,8 @@ func (s *Server) redo(w http.ResponseWriter, r *http.Request) {
 	if cfg == nil {
 		return
 	}
-	var qid int
-	if _, err := fmt.Sscanf(r.PathValue("qid"), "%d", &qid); err != nil {
+	qid, err := strconv.Atoi(r.PathValue("qid"))
+	if err != nil || qid <= 0 {
 		writeErr(w, 400, "bad_qid")
 		return
 	}
@@ -208,7 +294,11 @@ func (s *Server) markSeen(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QIDs []int `json:"qids"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, 32<<10) {
+		return
+	}
+	if len(req.QIDs) > 500 {
+		writeErr(w, 400, "too_many_qids")
 		return
 	}
 	if err := s.Prog.MarkSeen(r.Context(), cfg.Prefix, userOf(r).Slot, req.QIDs); err != nil {
@@ -226,7 +316,7 @@ func (s *Server) markViewed(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QID int `json:"qid"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, 8<<10) {
 		return
 	}
 	if err := s.Prog.MarkViewed(r.Context(), cfg.Prefix, userOf(r).Slot, req.QID); err != nil {
@@ -254,7 +344,7 @@ func (s *Server) buildPaper(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req progress.PaperReq
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, 64<<10) {
 		return
 	}
 	paper, err := s.Prog.BuildPaper(r.Context(), cfg.Prefix, userOf(r).Slot, req)
@@ -327,7 +417,7 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 		QID    int  `json:"qid"`
 		Stream bool `json:"stream"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, 32<<10) {
 		return
 	}
 	q := cfg.Question(req.QID)
@@ -340,11 +430,12 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 501, "no_key")
 		return
 	}
-	// 持久化缓存：同一题只烧一次 token（跨设备复用）
+	// 持久化缓存：题目内容 + prompt/模型版本一致才复用
+	hash := explainHash(cfg.Prefix, q)
 	var cached []byte
 	err := s.DB.QueryRowContext(r.Context(),
-		`SELECT payload FROM explain_cache WHERE subject=$1 AND qid=$2 ORDER BY ts DESC LIMIT 1`,
-		cfg.Prefix, req.QID).Scan(&cached)
+		`SELECT payload FROM explain_cache WHERE subject=$1 AND qid=$2 AND hash=$3`,
+		cfg.Prefix, req.QID, hash).Scan(&cached)
 	if err == nil && len(cached) > 0 {
 		if req.Stream {
 			streamExplain(w, json.RawMessage(cached), true)
@@ -356,12 +447,18 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.Prog.Quota.Allow(userOf(r).Slot) {
+		writeErr(w, 429, "too_many_requests")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 85*time.Second)
 	defer cancel()
+	start := time.Now()
 	resp, err := client.Explain(ctx, gradeai.ExplainReq{
 		Stem: q.Stem, Ref: q.Ref, Options: optionsOf(q), Answer: q.Answer,
 	})
 	if err != nil {
+		log.Printf("explain 失败 subject=%s qid=%d took=%s err=%v", cfg.Prefix, q.ID, time.Since(start).Round(time.Millisecond), err)
 		var se *gradeai.Err
 		if errors.As(err, &se) {
 			writeErr(w, se.Status, se.Code)
@@ -370,11 +467,14 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, "upstream")
 		return
 	}
+	log.Printf("explain 完成 subject=%s qid=%d took=%s source=%s items=%d", cfg.Prefix, q.ID, time.Since(start).Round(time.Millisecond), resp.Source, len(resp.Items))
 	if b, err := json.Marshal(resp); err == nil {
-		_, _ = s.DB.ExecContext(context.Background(),
+		wctx, wcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _ = s.DB.ExecContext(wctx,
 			`INSERT INTO explain_cache (subject,qid,hash,payload,ts) VALUES ($1,$2,$3,$4,$5)
 			 ON CONFLICT (subject,qid,hash) DO UPDATE SET payload=excluded.payload, ts=excluded.ts`,
-			cfg.Prefix, q.ID, fmt.Sprintf("%x", len(b)), string(b), time.Now().UnixMilli())
+			cfg.Prefix, q.ID, hash, string(b), time.Now().UnixMilli())
+		wcancel()
 	}
 	if req.Stream {
 		b, _ := json.Marshal(resp)
@@ -432,19 +532,36 @@ func optionsOf(q *subject.Question) []gradeai.Opt {
 // ——— 旧数据迁移 ———
 
 func (s *Server) migrate(w http.ResponseWriter, r *http.Request) {
+	if !s.AllowLegacyImport {
+		writeErr(w, 404, "not_found")
+		return
+	}
 	var req struct {
 		Subject string          `json:"subject"`
 		Blob    json.RawMessage `json:"blob"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, 1<<20) {
 		return
 	}
 	if s.Reg.Get(req.Subject) == nil {
 		writeErr(w, 404, "unknown_subject")
 		return
 	}
+	// 每个账号只允许导入一次（临时端点，下一次发布删除）
+	res, err := s.DB.ExecContext(r.Context(),
+		`INSERT INTO legacy_imports (user_id, imported_at) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		userOf(r).ID, time.Now().UnixMilli())
+	if err != nil {
+		writeErr(w, 500, "internal")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeErr(w, 409, "already_imported")
+		return
+	}
 	n, err := store.ImportBlob(r.Context(), s.DB, s.Reg, req.Subject, userOf(r).Slot, req.Blob)
 	if err != nil {
+		_, _ = s.DB.ExecContext(context.Background(), `DELETE FROM legacy_imports WHERE user_id=$1`, userOf(r).ID)
 		writeErr(w, 400, "bad_payload")
 		return
 	}
@@ -463,17 +580,50 @@ func writeErr(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any, max int64) bool {
+	if max <= 0 {
+		max = 1 << 20
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, max)
 	if ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))); ct != "" && !strings.HasPrefix(ct, "application/json") {
 		writeErr(w, 415, "unsupported_media_type")
 		return false
 	}
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeErr(w, 413, "too_large")
+			return false
+		}
 		writeErr(w, 400, "bad_request")
 		return false
 	}
 	return true
+}
+
+// explainPromptVersion：prompt/模型口径变更时递增，使旧解析缓存自然失效。
+const explainPromptVersion = "v2"
+
+func explainHash(prefix string, q *subject.Question) string {
+	h := sha256.New()
+	h.Write([]byte(prefix))
+	h.Write([]byte{0})
+	h.Write([]byte(q.Stem))
+	h.Write([]byte{0})
+	for _, o := range q.Options {
+		h.Write([]byte(o.Key))
+		h.Write([]byte{1})
+		h.Write([]byte(o.Text))
+		h.Write([]byte{2})
+	}
+	h.Write([]byte(q.Answer))
+	h.Write([]byte{0})
+	h.Write([]byte(q.Ref))
+	h.Write([]byte{0})
+	h.Write([]byte(explainPromptVersion))
+	h.Write([]byte{0})
+	h.Write([]byte(os.Getenv("QWEN_MODEL")))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func writeProgressErr(w http.ResponseWriter, err error) {
@@ -489,6 +639,8 @@ func writeProgressErr(w http.ResponseWriter, err error) {
 		writeErr(w, 501, "no_key")
 	case errors.Is(err, progress.ErrEmptyPool):
 		writeErr(w, 409, "empty_pool")
+	case errors.Is(err, progress.ErrQuota):
+		writeErr(w, 429, "too_many_requests")
 	default:
 		writeErr(w, 500, "internal")
 	}
