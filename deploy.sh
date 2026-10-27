@@ -21,7 +21,7 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 read -r -a PREFIXES <<<"$(bun -e 'import {loadSubjects} from "./scripts/config.js"; console.log(loadSubjects().map(s=>s.prefix).join(" "))')"
 PRIMARY=$(bun -e 'import {loadSubjects} from "./scripts/config.js"; const s=loadSubjects().find(x=>x.primary)||loadSubjects()[0]; console.log(s.prefix)')
 [ "${#PREFIXES[@]}" -ge 1 ] || { echo "❌ subjects/ 下没有科目"; exit 1; }
-echo "📚 科目前缀：${PREFIXES[*]}（主科目 /${PRIMARY}/，镜像 tag $TAG）"
+echo "📚 科目前缀：${PREFIXES[*]}（主科目 /${PRIMARY}/，镜像 tag ${TAG}）"
 
 SSH_PORT=""
 for P in 6000 22; do
@@ -47,11 +47,11 @@ bun run build
 bun run stage
 
 # —— 2. 单 API 镜像（tag + latest） ——
-echo "🔨 构建 exam-api:$TAG（linux/amd64）…"
-docker build --platform linux/amd64 -t "exam-api:$TAG" -f backend/grade-svc/Dockerfile.api .
-docker tag "exam-api:$TAG" exam-api:latest
+echo "🔨 构建 exam-api:${TAG}（linux/amd64）…"
+docker build --platform linux/amd64 -t "exam-api:${TAG}" -f backend/grade-svc/Dockerfile.api .
+docker tag "exam-api:${TAG}" exam-api:latest
 echo "📤 上传镜像…"
-docker save "exam-api:$TAG" exam-api:latest | gzip -1 | ssh -p "$SSH_PORT" -o BatchMode=yes "$SSH_HOST" "gunzip | docker load"
+docker save "exam-api:${TAG}" exam-api:latest | gzip -1 | ssh -p "$SSH_PORT" -o BatchMode=yes "$SSH_HOST" "gunzip | docker load"
 
 # —— 3. 静态 ——
 S "mkdir -p $REMOTE_DIR/web $REMOTE_DIR/backups"
@@ -195,4 +195,4 @@ SUB_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://$IP/api/
 ME_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://$IP/api/v1/auth/me" || true)
 [ "$ME_CODE" = "401" ] || { echo "❌ /api/v1/auth/me 未登录应 401，实得 ${ME_CODE:-无响应}"; exit 1; }
 echo "🔐 API 与静态均已生效（/api/v1/health 200、未登录 me 401）"
-echo "✅ 发布完成：http://$IP/${PREFIXES[0]}/ …（共 ${#PREFIXES[@]} 科，镜像 $TAG；回滚：./rollback.sh <上一tag>）"
+echo "✅ 发布完成：http://$IP/${PREFIXES[0]}/ …（共 ${#PREFIXES[@]} 科，镜像 ${TAG}；回滚：./rollback.sh <上一tag>）"
