@@ -85,7 +85,7 @@ deploy.sh                     发布脚本
 - **重点优先背**：按首次评分排未掌握题（答错 → 待提高 → 未作答；同档简答/填空优先），可在当前页练习，≥80 分移出队列。
 - **考前重点记忆**：把串讲导图拆成考点小节，只列知识点、不显示题干；所挂题全部 ≥80 分即标为已掌握。
 - **批量提交**：作答自动存草稿（仅本机），底部悬浮条可一次提交全部未判分草稿。
-- **账号**：未登录也可直接做题（服务端游客会话，进度已保存）。登录后游客进度自动并入账号，换设备用同一邮箱登录即续用。支持邮箱验证与找回密码（需配置阿里云 DirectMail；未配置时找回密码用管理员 CLI）。
+- **账号**：未登录也可直接做题（服务端游客会话，进度已保存）。登录后游客进度自动并入账号，换设备用同一邮箱登录即续用。支持邮箱验证与找回密码（需配置阿里云 DirectMail；未配置时找回密码用管理员 CLI）。AI 调用按账号限流：`GRADE_HOURLY_LIMIT`（默认 200 次/小时，0=不限）；游客总量受 `MAX_GUESTS` 限制。
 - **清空记录**：三道闸门（确认 → 随机码 → 最终确认），删除作答、得分、历史与出现标记。
 
 ## 数据管线（勿手改生成物）
@@ -113,9 +113,12 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 - `./deploy.sh`：构建题库与前端 → 交叉构建 `exam-api`（linux/amd64，科目与题库随镜像）→ 上传镜像 → rsync `build/web` → 生成 compose（`postgres` + `api-svc`）→ 执行 `-migrate-v1` → 写 nginx。
 - nginx：`/<prefix>/` 直接托管 `/opt/exam-sites/web`（同一份前端），`/api/` 反代 `127.0.0.1:8793`。
-- 数据迁移：`apivc -migrate-v1 -dry-run` 先看统计，再正式执行；完成后旧 `sync/answers/history/explains` 表被删除。回滚手段是发布前的数据库快照。
+- 数据迁移：`deploy.sh` 会先强制 `pg_dump -Fc` 快照，再 `apivc -migrate-v1 -dry-run` 看统计、正式执行；完成后旧 `sync/answers/history/explains` 表被删除。
+- 备份：服务器 `exam-backup.timer` 每日 03:30 执行 `backup.sh`，保留 30 天（`/opt/exam-sites/backups/daily-*.dump`）。恢复：`pg_restore -d <db> backups/xxx.dump`。
+- 回滚：`./rollback.sh <上一镜像 tag>`（镜像按 git 短 SHA 保留最近 5 个；compose/nginx 配置每次发布前自动备份）。
 - 服务器目标写在仓库根未跟踪的 `.deploy.env`（`SSH_HOST=user@host`），**勿提交**。
-- **每次本地更新提交后必须跑 `./deploy.sh`** 并 curl 验证：`/<prefix>/` 200、`/api/v1/subjects` 200、`/api/v1/auth/me` 401。
+- **每次本地更新提交后必须跑 `./deploy.sh`** 并验证：`/api/v1/health` 200、`/<prefix>/` 返回应用页、`/api/v1/subjects` 200、`/api/v1/auth/me` 401。
+- 日志：`docker compose logs -f api-svc`（容器日志已限制 20m×3）；nginx 日志在 `/var/log/nginx/`。
 
 ## 科目档案
 

@@ -61,7 +61,7 @@ deploy.sh                 发布脚本
 - 组卷：`POST/DELETE subjects/{prefix}/papers`。
 - 视图：`GET .../stats|recite|memo`。
 - 解析：`POST .../explain`（`stream:true` 走 SSE：delta → done）。
-- 迁移：`POST migrate`（浏览器旧 localStorage 一次性导入）。
+- 迁移：`POST migrate` 默认**不注册**；只有 `ALLOW_LEGACY_IMPORT=1` 时启用，每账号一次、校验题号、且不写全局解析缓存（下一次发布删除该端点）。
 
 ## 进度语义（服务端唯一写入方）
 
@@ -73,29 +73,32 @@ deploy.sh                 发布脚本
 
 ## 账号
 
-- 游客由服务端签发（`users.is_guest`），可直接做题；注册/登录时自动并入账号；也可显式 `POST auth/claim {guest_slot}`。
+- 游客由服务端签发（`users.is_guest`），可直接做题；注册/登录时自动并入账号；也可显式 `POST auth/claim {guest_slot}`。游客总量受 `MAX_GUESTS`（默认 200）限制，长期无会话的游客每小时自动清理。
+- AI 调用按账号/游客做小时配额：`GRADE_HOURLY_LIMIT`（默认 200；0=不限，启动日志会告警）。超限返回 429 `too_many_requests`，不熔断会话。
 - 会话 Cookie `exam_session`（`HttpOnly; SameSite=Lax; Path=/`，默认 30 天）；库里只存 token 的 SHA-256。
 - 密码 PBKDF2-SHA256 600k + 16 字节盐；登录/注册/邮件发送均限流。
 - 邮件（可选，阿里云 DirectMail）：`MAIL_DRIVER=aliyun` + AccessKey + `ALIYUN_DM_ACCOUNT_NAME`；验证链接 24h、重置 30min，单次使用；未配置时相关接口返回 503 `mail_unavailable`。
 
 ## 数据库
 
-- 表：`users/sessions/email_tokens`、`progress/histories/papers/seen/cleared/explain_cache`。
+- 表：`users/sessions/email_tokens`、`progress/histories/papers/seen/cleared/explain_cache`、`legacy_imports`。
 - 迁移由 goose embed 自动执行（`internal/store/migrations`）。
 - v1 数据迁移：`apivc -migrate-v1 -dry-run` 先看统计，再 `apivc -migrate-v1` 正式执行；完成后删除 `sync/answers/history/explains`（无回滚表，靠发布前数据库快照）。
 - 管理员重置密码：`apivc -reset-password <email>`（新密码从 stdin 读一行）。
+- 备份：`deploy.sh` 在迁移前强制 `pg_dump -Fc` 到远端 `backups/pre-deploy-*.dump`；服务器 `exam-backup.timer` 每日 03:30 备份（保留 30 天）。恢复：`pg_restore -d <db> backups/xxx.dump`。
 
 ## 部署
 
-- `deploy.sh`：build+stage → 构建 `exam-api`（linux/amd64）→ 上传镜像 → rsync `build/web` → 生成 compose（`postgres` + `api-svc`，科目与题库在镜像内）→ 执行迁移 → nginx：
+- `deploy.sh`：build+stage → 构建 `exam-api:<git短SHA>` 并打 `latest` → 上传镜像 → rsync `build/web` → 生成 compose（`postgres` + `api-svc`，科目与题库在镜像内，均带 healthcheck/日志轮转）→ **迁移前强制 pg_dump** → 执行迁移 → nginx（原子切换、失败回退）→ 安装备份 timer、清理旧镜像 → 探活：
   - `/<prefix>/` → `/opt/exam-sites/web`（同一份前端，URL 前缀决定科目）
   - `/api/` → `127.0.0.1:8793`
 - 服务器目标写在仓库根未跟踪的 `.deploy.env`（`SSH_HOST=...`），**不得提交**。
-- 发布后必须探活：`/<prefix>/` 200、`/api/v1/subjects` 200、`/api/v1/auth/me` 401。
+- 发布后必须探活：`/api/v1/health` 200、`/<prefix>/` 返回应用页（含 api.js）、`/api/v1/subjects` 200、`/api/v1/auth/me` 401。
+- 回滚：`./rollback.sh <上一镜像tag> [compose备份] [nginx备份]`；镜像按 git 短 SHA 保留最近 5 个。
 
 ## 开发约定
 
 - 注释、文案、commit message 一律中文；改动随手提交。
 - 前端不再有第三方依赖；新增交互只操作 DOM 与 `API`，不新增业务计算。
 - 新增科目：`bun run new-subject ...` → 放 docx → 改 `build_data.js` 解析段 → `bun run build` → `./deploy.sh`。
-- 测试守卫：`tests/frontend_purity.test.js`（前端不得出现判分/合并/旧接口）、`tests/ref_sync.test.js`（reference.md 与导图逐字一致）、Go 判分全量题库不变量。
+- 测试守卫：`tests/frontend_purity.test.js`（前端不得出现判分/合并/旧接口）、`tests/ref_sync.test.js`（reference.md 与导图逐字一致）、Go 判分全量题库不变量、`internal/httpapi` 端点/配额/迁移关闭/panic 用例。
