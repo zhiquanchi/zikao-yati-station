@@ -115,6 +115,8 @@ EOF
   R "$TMP" "$SSH_HOST:/tmp/exam-site.nginx"
   S "cat /tmp/exam-site.nginx > /etc/nginx/sites-available/exam-site && rm -f /tmp/exam-site.nginx"
   rm -f "$TMP"
+  # 旧门户站点同名 server_name 会抢占请求（502/404），发布时一并移除
+  S "rm -f /etc/nginx/sites-enabled/exam-portal /etc/nginx/sites-enabled/exam-sites 2>/dev/null || true"
   S "ln -sf /etc/nginx/sites-available/exam-site /etc/nginx/sites-enabled/exam-site"
   if S "nginx -t"; then S "systemctl reload nginx"; else echo "❌ nginx 配置校验失败，未 reload"; exit 1; fi
 else
