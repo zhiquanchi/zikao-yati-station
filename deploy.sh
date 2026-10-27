@@ -76,7 +76,7 @@ S "cd $REMOTE_DIR && { grep -q '^MAIL_DRIVER=' .env || echo 'MAIL_DRIVER=none' >
 S "cd $REMOTE_DIR && { grep -q '^PUBLIC_ORIGIN=' .env || echo \"PUBLIC_ORIGIN=http://$IP\" >> .env; }"
 S "cd $REMOTE_DIR && { grep -q '^REQUIRE_EMAIL_VERIFY=' .env || echo 'REQUIRE_EMAIL_VERIFY=0' >> .env; }"
 S "cd $REMOTE_DIR && chmod 600 .env"
-S "cd $REMOTE_DIR && (docker compose up -d --wait --wait-timeout 120 || { docker compose up -d; })"
+S "cd $REMOTE_DIR && (docker compose up -d --remove-orphans --wait --wait-timeout 120 || { docker compose up -d --remove-orphans; })"
 echo "🗃 v1 → v2 数据迁移（幂等；无旧表则跳过）…"
 S "cd $REMOTE_DIR && docker compose exec -T api-svc apivc -migrate-v1 -dry-run"
 S "cd $REMOTE_DIR && docker compose exec -T api-svc apivc -migrate-v1"
