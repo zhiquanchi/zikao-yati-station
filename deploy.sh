@@ -51,7 +51,7 @@ docker save exam-api:latest | gzip -1 | ssh -p "$SSH_PORT" -o BatchMode=yes "$SS
 
 # —— 3. 静态与科目配置 ——
 S "mkdir -p $REMOTE_DIR/web $REMOTE_DIR/subjects"
-R --delete build/web/ "$SSH_HOST:$REMOTE_DIR/web/"
+R -a --delete build/web/ "$SSH_HOST:$REMOTE_DIR/web/"
 echo "📚 同步科目配置与题库…"
 R -a --delete \
   --include '*/' \
