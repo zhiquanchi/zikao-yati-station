@@ -117,15 +117,20 @@ EOF
   # 旧门户站点同名 server_name 会抢占请求（502/404），发布时一并移除
   S "rm -f /etc/nginx/sites-enabled/exam-portal /etc/nginx/sites-enabled/exam-sites 2>/dev/null || true"
   S "ln -sf /etc/nginx/sites-available/exam-site /etc/nginx/sites-enabled/exam-site"
-  if S "nginx -t"; then S "systemctl reload nginx"; else echo "❌ nginx 配置校验失败，未 reload"; exit 1; fi
+  if S "nginx -t"; then S "systemctl reload nginx"; sleep 2; else echo "❌ nginx 配置校验失败，未 reload"; exit 1; fi
 else
   echo "ℹ 服务器无 nginx：请自行把 $REMOTE_DIR/web 挂到静态根并反代 /api/ → 127.0.0.1:8793"
 fi
 
 # —— 6. 探活 ——
 for pre in "${PREFIXES[@]}"; do
-  PAGE=$(curl -fsS --max-time 15 --retry 3 --retry-delay 2 --retry-all-errors "http://$IP/$pre/" || true)
-  if printf '%s' "$PAGE" | grep -q 'api.js'; then
+  OK=""
+  for _ in 1 2 3 4 5; do
+    PAGE=$(curl -fsS --max-time 15 "http://$IP/$pre/" || true)
+    if printf '%s' "$PAGE" | grep -q 'api.js'; then OK=1; break; fi
+    sleep 2
+  done
+  if [ -n "$OK" ]; then
     echo "探活 /$pre/ → 应用页面正常"
   else
     echo "❌ /$pre/ 未返回应用页面（nginx 兜底可能落到了默认站点）"; exit 1
