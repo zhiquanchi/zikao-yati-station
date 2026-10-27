@@ -1,0 +1,10 @@
+[Unit]
+Description=Exam site PostgreSQL daily backup
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/exam-sites
+ExecStart=/opt/exam-sites/backup.sh
+User=root
