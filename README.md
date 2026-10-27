@@ -111,7 +111,7 @@ textutil -convert txt -stdout "<新docx>" > subjects/<科目>/data/raw.txt && bu
 
 ## 部署
 
-- `./deploy.sh`：构建题库与前端 → 交叉构建 `exam-api`（linux/amd64）→ 上传镜像 → rsync `build/web` 与科目配置 → 生成 compose（`postgres` + `api-svc`）→ 执行 `-migrate-v1` → 写 nginx。
+- `./deploy.sh`：构建题库与前端 → 交叉构建 `exam-api`（linux/amd64，科目与题库随镜像）→ 上传镜像 → rsync `build/web` → 生成 compose（`postgres` + `api-svc`）→ 执行 `-migrate-v1` → 写 nginx。
 - nginx：`/<prefix>/` 直接托管 `/opt/exam-sites/web`（同一份前端），`/api/` 反代 `127.0.0.1:8793`。
 - 数据迁移：`apivc -migrate-v1 -dry-run` 先看统计，再正式执行；完成后旧 `sync/answers/history/explains` 表被删除。回滚手段是发布前的数据库快照。
 - 服务器目标写在仓库根未跟踪的 `.deploy.env`（`SSH_HOST=user@host`），**勿提交**。

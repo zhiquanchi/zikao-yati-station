@@ -4,7 +4,7 @@
 
 - `frontend/`（`api.js` / `model.js` / `app.js`）只负责渲染、交互、筛选与草稿；不得出现判分、合并、掌握判定、组卷权重、身份分区、权限判断。
 - 所有业务（判分、逐项解析、进度、组卷、统计、背题、考点、账号、游客、限流、邮件）都在 `backend/grade-svc/` 的 Go 代码里。
-- 前端与后端只通过 `api/v1` 契约通信；前端可单独部署到任意静态服务器，后端只依赖 `SUBJECTS_DIR` 与 PostgreSQL。
+- 前端与后端只通过 `api/v1` 契约通信；前端可单独部署到任意静态服务器，后端只依赖 `SUBJECTS_DIR`（随镜像发布）与 PostgreSQL。
 - 不做兼容层：旧 `/api/store`、`/api/grade`、`/api/auth` 与 v1 blob 形状已删除，不恢复。
 
 ## 常用命令
@@ -87,7 +87,7 @@ deploy.sh                 发布脚本
 
 ## 部署
 
-- `deploy.sh`：build+stage → 构建 `exam-api`（linux/amd64）→ 上传镜像 → rsync `build/web` 与科目配置 → 生成 compose（`postgres` + `api-svc`）→ 执行迁移 → nginx：
+- `deploy.sh`：build+stage → 构建 `exam-api`（linux/amd64）→ 上传镜像 → rsync `build/web` → 生成 compose（`postgres` + `api-svc`，科目与题库在镜像内）→ 执行迁移 → nginx：
   - `/<prefix>/` → `/opt/exam-sites/web`（同一份前端，URL 前缀决定科目）
   - `/api/` → `127.0.0.1:8793`
 - 服务器目标写在仓库根未跟踪的 `.deploy.env`（`SSH_HOST=...`），**不得提交**。

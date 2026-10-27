@@ -1,5 +1,5 @@
 # 单 API 服务镜像：判分 / 逐项解析 / 账号 / 进度 / 组卷 / 统计。
-# 科目与题库不打进镜像：运行时挂载 ./subjects 到 SUBJECTS_DIR。
+# 科目与题库随镜像发布到 SUBJECTS_DIR（服务器 Docker 为 snap 版，不支持 bind mount 宿主目录）。
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY backend/grade-svc/go.mod backend/grade-svc/go.sum ./
@@ -10,6 +10,8 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/apivc ./cmd/apivc
 FROM alpine:3.20
 RUN adduser -D -u 10001 app
 COPY --from=build /out/apivc /usr/local/bin/apivc
+# 服务器 Docker（snap）不允许 bind mount 宿主目录：科目与题库随镜像发布
+COPY subjects/ /app/subjects/
 USER app
 WORKDIR /app
 ENV API_HOST=0.0.0.0 \

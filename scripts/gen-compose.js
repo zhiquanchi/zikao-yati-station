@@ -42,8 +42,6 @@ lines.push("      postgres:");
 lines.push("        condition: service_healthy");
 lines.push("    ports:");
 lines.push('      - "127.0.0.1:8793:8793" # 仅回环：宿主机 nginx 反代 /api/');
-lines.push("    volumes:");
-lines.push("      - ./subjects:/app/subjects:ro");
 lines.push("    environment:");
 lines.push("      DATABASE_URL: postgres://${POSTGRES_USER:-exam}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-exam}?sslmode=disable");
 lines.push("      SUBJECTS_DIR: /app/subjects");

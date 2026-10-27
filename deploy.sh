@@ -50,18 +50,9 @@ echo "📤 上传镜像…"
 docker save exam-api:latest | gzip -1 | ssh -p "$SSH_PORT" -o BatchMode=yes "$SSH_HOST" "gunzip | docker load"
 
 # —— 3. 静态与科目配置 ——
-S "mkdir -p $REMOTE_DIR/web $REMOTE_DIR/subjects"
+S "mkdir -p $REMOTE_DIR/web"
 R -a --delete build/web/ "$SSH_HOST:$REMOTE_DIR/web/"
-echo "📚 同步科目配置与题库…"
-R -a --delete \
-  --include '*/' \
-  --include 'subject.json' \
-  --include 'questions.json' \
-  --include 'mindmap.html' \
-  --include 'reference.md' \
-  --include 'memo_kp.json' \
-  --exclude '*' \
-  subjects/ "$SSH_HOST:$REMOTE_DIR/subjects/"
+# 科目与题库随 exam-api 镜像发布（服务器 Docker 为 snap 版，不允许 bind mount 宿主目录）
 
 # —— 4. 编排与迁移 ——
 bun scripts/gen-compose.js --remote > build/docker-compose.yml
